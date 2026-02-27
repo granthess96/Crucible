@@ -204,32 +204,50 @@ class Fetcher:
         """
         Return a bare clone repo, creating or updating as needed.
         Always fetches to ensure we have the latest refs.
+        Uses subprocess git directly for fetch — more reliable than gitpython
+        for bare clone refspec handling.
         """
+        import subprocess
         bare_path = self._bare_path(component_name)
 
         if bare_path.exists():
             try:
                 repo = git.Repo(bare_path)
-                log.info(f"{component_name}: fetching {url}")
-                repo.remotes.origin.fetch(prune=True)
+                log.info(f"{component_name}: fetching updates from {url}")
+                # Use subprocess git directly — bare clones from gitpython
+                # may not have the default refspec set, causing fetch to fail
+                result = subprocess.run(
+                    ["git", "fetch", "--prune", "--tags", "origin"],
+                    cwd=bare_path,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise GitCommandError("git fetch", result.returncode,
+                                          result.stderr.strip())
                 return repo
             except (InvalidGitRepositoryError, GitCommandError) as exc:
-                log.warning(f"{component_name}: bare clone corrupt, re-cloning: {exc}")
+                log.warning(f"{component_name}: bare clone unusable, re-cloning: {exc}")
                 shutil.rmtree(bare_path)
 
-        # Fresh bare clone
+        # Fresh bare clone — use subprocess for consistency
         log.info(f"{component_name}: cloning {url}")
         try:
-            repo = git.Repo.clone_from(
-                url,
-                bare_path,
-                bare=True,
-                multi_options=["--filter=blob:none"],  # partial clone — faster for large repos
+            result = subprocess.run(
+                ["git", "clone", "--bare", "--filter=blob:none", url, str(bare_path)],
+                capture_output=True,
+                text=True,
             )
-        except GitCommandError as exc:
+            if result.returncode != 0:
+                raise FetchError(component_name,
+                    f"git clone failed: {result.stderr.strip()}")
+            repo = git.Repo(bare_path)
+        except FetchError:
+            raise
+        except Exception as exc:
             raise FetchError(
                 component_name,
-                f"git clone failed: {exc.stderr.strip()}"
+                f"git clone failed: {exc}"
             ) from exc
 
         return repo
