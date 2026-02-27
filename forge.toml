@@ -1,0 +1,16 @@
+# forge.toml — kiln/forge build tree root marker and configuration
+# Commit this file. Machine-local overrides go in ~/.kiln/config.toml
+
+[forge]
+base_image = ""    # registry URI for forge base squashfs image
+toolchain  = ""    # registry URI for toolchain image
+
+[cache]
+local  = "~/.kiln/cache"
+# global = ""
+
+[registry]
+url = ""
+
+[scheduler]
+max_weight = 8
