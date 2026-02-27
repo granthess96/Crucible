@@ -1,0 +1,213 @@
+"""
+crucible/config.py
+
+Shared configuration for kiln and forge.
+
+Both tools read from the same forge.toml at the project root.
+Neither tool should import from the other — both import from here.
+
+Two config sources, merged in order (later overrides earlier):
+  1. forge.toml          — project config, committed to repo
+  2. ~/.kiln/config.toml — machine-local overrides, never committed
+  3. Environment vars    — CI overrides
+
+Discovery:
+  Walk up from cwd looking for forge.toml.
+  That directory is the project root — all relative paths resolve from there.
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+class ConfigError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Config dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ForgeConfig:
+    base_image: str = ""       # path or registry URI for base squashfs
+    toolchain:  str = ""       # path or registry URI for toolchain squashfs
+
+
+@dataclass
+class CacheConfig:
+    local:      Path       = field(default_factory=lambda: Path.home() / ".kiln" / "cache")
+    global_url: str | None = None
+
+
+@dataclass
+class RegistryConfig:
+    url: str = ""
+
+
+@dataclass
+class SchedulerConfig:
+    max_weight: int = 8
+
+
+@dataclass
+class CrucibleConfig:
+    """
+    Unified config for kiln and forge.
+    build_root is set by find_project_root(), not from toml.
+    """
+    build_root: Path = field(default_factory=Path.cwd)
+    forge:      ForgeConfig     = field(default_factory=ForgeConfig)
+    cache:      CacheConfig     = field(default_factory=CacheConfig)
+    registry:   RegistryConfig  = field(default_factory=RegistryConfig)
+    scheduler:  SchedulerConfig = field(default_factory=SchedulerConfig)
+
+    # --- Derived paths ---
+
+    @property
+    def components_dir(self) -> Path:
+        return self.build_root / "components"
+
+    @property
+    def lock_file(self) -> Path:
+        return self.build_root / "kiln.lock"
+
+    @property
+    def git_cache_dir(self) -> Path:
+        return self.build_root / ".kiln" / "git-cache"
+
+    @property
+    def local_cache_dir(self) -> Path:
+        return self.cache.local.expanduser().resolve()
+
+    @property
+    def state_dir(self) -> Path:
+        return self.build_root / ".kiln" / "state"
+
+    @property
+    def audit_dir(self) -> Path:
+        return self.build_root / ".kiln" / "audit"
+
+    @property
+    def base_image_path(self) -> Path:
+        """Resolved path to base squashfs image."""
+        return Path(self.forge.base_image).expanduser() if self.forge.base_image \
+               else Path("/opt/forge/base.sqsh")
+
+    @property
+    def toolchain_path(self) -> Path:
+        """Resolved path to toolchain squashfs image."""
+        return Path(self.forge.toolchain).expanduser() if self.forge.toolchain \
+               else Path("/opt/forge/tools.sqsh")
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+def find_project_root(start: Path | None = None) -> Path:
+    """
+    Walk up from start (default: cwd) looking for forge.toml.
+    Raises ConfigError if not found.
+    """
+    current = (start or Path.cwd()).resolve()
+    for directory in [current, *current.parents]:
+        if (directory / "forge.toml").exists():
+            return directory
+    raise ConfigError(
+        "forge.toml not found.\n"
+        "Are you inside a Crucible project?\n"
+        f"Searched from: {current}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Loader
+# ---------------------------------------------------------------------------
+
+def load_config(start: Path | None = None) -> CrucibleConfig:
+    """
+    Find forge.toml, load project config, overlay machine-local config.
+    Returns a fully resolved CrucibleConfig.
+    """
+    build_root = find_project_root(start)
+    config     = CrucibleConfig(build_root=build_root)
+
+    # Layer 1: forge.toml
+    _apply_toml(config, build_root / "forge.toml")
+
+    # Layer 2: ~/.kiln/config.toml (machine-local)
+    local_toml = Path.home() / ".kiln" / "config.toml"
+    if local_toml.exists():
+        _apply_toml(config, local_toml)
+
+    # Layer 3: environment variables (CI)
+    if w := os.environ.get("KILN_MAX_WEIGHT"):
+        try:
+            config.scheduler.max_weight = int(w)
+        except ValueError:
+            raise ConfigError(f"KILN_MAX_WEIGHT must be an integer, got: {w!r}")
+    if c := os.environ.get("KILN_LOCAL_CACHE"):
+        config.cache.local = Path(c)
+    if g := os.environ.get("KILN_GLOBAL_CACHE"):
+        config.cache.global_url = g
+
+    return config
+
+
+def _apply_toml(config: CrucibleConfig, path: Path) -> None:
+    """Apply a toml file's settings onto config in-place. Missing keys ignored."""
+    try:
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+    except FileNotFoundError:
+        return
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
+
+    if forge := data.get("forge"):
+        if v := forge.get("base_image"): config.forge.base_image = v
+        if v := forge.get("toolchain"):  config.forge.toolchain  = v
+
+    if cache := data.get("cache"):
+        if v := cache.get("local"):  config.cache.local      = Path(v)
+        if v := cache.get("global"): config.cache.global_url = v
+
+    if registry := data.get("registry"):
+        if v := registry.get("url"): config.registry.url = v
+
+    if scheduler := data.get("scheduler"):
+        if v := scheduler.get("max_weight"):
+            config.scheduler.max_weight = int(v)
+
+
+# ---------------------------------------------------------------------------
+# forge.toml template — written by `kiln init`
+# ---------------------------------------------------------------------------
+
+FORGE_TOML_TEMPLATE = """\
+# forge.toml — Crucible project root marker and configuration
+# Commit this file. Machine-local overrides go in ~/.kiln/config.toml
+
+[forge]
+base_image = "/opt/forge/base.sqsh"    # path or registry URI for base image
+toolchain  = "/opt/forge/tools.sqsh"   # path or registry URI for toolchain
+
+[cache]
+local  = "~/.kiln/cache"    # local artifact cache
+# global = ""               # global cache URI
+
+[registry]
+url = ""                     # container registry URL
+
+[scheduler]
+max_weight = 8               # adjust per machine in ~/.kiln/config.toml
+"""

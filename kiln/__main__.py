@@ -9,6 +9,7 @@ Usage (from any directory inside a build tree):
 Verbs (run in the order given, stop on first failure):
     deps        resolve DAG, stat cache/registry, report hits/misses
     fetch       git fetch source into bare clone cache
+    checkout    export source tree, apply patches, prepare build dirs
     configure   run build system configure step
     build       compile
     test        run test suite
@@ -28,7 +29,7 @@ Options:
 Examples:
     cd components/rocm-hip
     kiln deps
-    kiln deps fetch configure build test install package
+    kiln deps fetch checkout configure build test install package
     kiln deps --publish
     kiln fetch configure build --verbose
 """
@@ -43,7 +44,7 @@ if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
 import argparse
-from kiln.config import load_config, ConfigError
+from crucible.config import load_config, ConfigError, CrucibleConfig
 from kiln.dag import (
     Resolver, ResolvedDAG, BuildSchedule, ResolveError,
     KilnLock, CacheBackend, RegistryBackend,
@@ -57,7 +58,7 @@ from kiln.output import Reporter, Status, OutputMode, detect_output_mode
 # ---------------------------------------------------------------------------
 
 ALL_VERBS = [
-    "deps", "fetch", "configure", "build", "test",
+    "deps", "fetch", "checkout", "configure", "build", "test",
     "install", "package", "clean", "purge", "clear_cache",
 ]
 
@@ -283,6 +284,249 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         return False
 
 
+
+def _populate_sysroot(
+    target:      str,
+    instance,
+    config,
+    cache:       TieredCache,
+    sysroot_dir: Path,
+) -> bool:
+    """
+    Unpack buildtime artifacts for all deps into sysroot_dir.
+    Re-runs the resolver to get manifest hashes — fast, correct, no state file needed.
+    Returns True on success, False with error message printed on failure.
+    """
+    import subprocess
+    import tempfile
+
+    if not instance.deps:
+        return True
+
+    lock     = KilnLock(config.lock_file)
+    resolver = Resolver(
+        components_root = config.components_dir,
+        cache           = _CacheStatAdapter(cache),
+        registry        = _RegistryStatAdapter(),
+        lock            = lock,
+        forge_base_hash = config.forge.base_image or "sha256:unconfigured",
+        toolchain_hash  = config.forge.toolchain  or "sha256:unconfigured",
+        max_weight      = config.scheduler.max_weight,
+    )
+
+    result = resolver.resolve(target)
+    if isinstance(result, ResolveError):
+        print(f"ERROR: dep resolution failed: {result.message}", file=sys.stderr)
+        return False
+
+    nodes     = result.components if isinstance(result, ResolvedDAG) else result.dag.components
+    dep_nodes = [n for n in nodes if n.name != target and n.output_store == "cache"]
+
+    if not dep_nodes:
+        return True
+
+    # Fail fast — all deps must be cached before we start unpacking
+    missing = [n for n in dep_nodes if not n.cache_hit]
+    if missing:
+        names = ", ".join(n.name for n in missing)
+        print(
+            f"ERROR: deps not in cache: {names}\n"
+            f"       Run \'kiln deps\' to check status, build missing deps first.",
+            file=sys.stderr,
+        )
+        return False
+
+    print(f"  {target}: populating __sysroot__/ from {len(dep_nodes)} dep(s)")
+
+    for node in dep_nodes:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            try:
+                cache.fetch(node.manifest_hash, tmp_path)
+            except (CacheMiss, CacheError) as exc:
+                print(f"ERROR: failed to fetch dep {node.name}: {exc}", file=sys.stderr)
+                return False
+
+            buildtime_tarball = tmp_path / "buildtime.tar.zst"
+            if not buildtime_tarball.exists():
+                print(
+                    f"ERROR: dep {node.name} has no buildtime.tar.zst in cache.\n"
+                    f"       Was it built with \'kiln package\'?",
+                    file=sys.stderr,
+                )
+                return False
+
+            # Extract buildtime artifact into __sysroot__/
+            # Try native zstd first, fall back to tar auto-detection
+            unpack = subprocess.run(
+                ["tar", "--use-compress-program=zstd", "-xf",
+                 str(buildtime_tarball), "-C", str(sysroot_dir)],
+                stderr=subprocess.PIPE,
+            )
+            if unpack.returncode != 0:
+                unpack = subprocess.run(
+                    ["tar", "-xf", str(buildtime_tarball), "-C", str(sysroot_dir)],
+                    stderr=subprocess.PIPE,
+                )
+            if unpack.returncode != 0:
+                print(
+                    f"ERROR: failed to unpack {node.name} buildtime artifact:\n"
+                    f"       {unpack.stderr.decode().strip()}",
+                    file=sys.stderr,
+                )
+                return False
+
+            print(f"  {target}: unpacked {node.name} ({node.manifest_hash[:12]})")
+
+    return True
+
+
+def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -> bool:
+    """
+    Set up the complete build environment for a component:
+      1. Verify kiln fetch was run (source_commit sentinel exists)
+      2. Wipe __source__/, __sysroot__/, __build__/, __install__/ for clean slate
+      3. Export source tree from bare clone into __source__/
+      4. Apply patches in lexicographic order
+      5. Unpack dep buildtime artifacts into __sysroot__/
+      6. Create empty __build__/ and __install__/
+      7. Write checked_out sentinel
+
+    Destructive — always starts from a clean slate. No prompts.
+    Precondition: kiln fetch must have run.
+    All deps must be present in the artifact cache.
+    """
+    import shutil
+    import subprocess
+    from kiln.registry import ComponentRegistry, RegistryError
+
+    try:
+        reg = ComponentRegistry(config.components_dir)
+    except RegistryError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return False
+
+    if target not in reg:
+        print(f"ERROR: component \'{target}\' not found in components/", file=sys.stderr)
+        return False
+
+    if not reg.is_build_def(target):
+        print(f"ERROR: {target} is an AssemblyDef — no source to check out",
+              file=sys.stderr)
+        return False
+
+    # --- Verify fetch was run ---
+    state_dir   = config.build_root / ".kiln" / "state" / target
+    commit_file = state_dir / "source_commit"
+    if not commit_file.exists():
+        print(
+            f"ERROR: {target} has not been fetched.\n"
+            f"       Run \'kiln fetch\' first.",
+            file=sys.stderr,
+        )
+        return False
+
+    sha       = commit_file.read_text(encoding="utf-8").strip()
+    bare_path = config.git_cache_dir / f"{target}.git"
+
+    if not bare_path.exists():
+        print(
+            f"ERROR: bare clone missing for {target}.\n"
+            f"       Run \'kiln fetch\' first.",
+            file=sys.stderr,
+        )
+        return False
+
+    instance      = reg.instantiate(target)
+    component_dir = config.components_dir / target
+    source_dir    = component_dir / "__source__"
+    sysroot_dir   = component_dir / "__sysroot__"
+    build_dir     = component_dir / "__build__"
+    install_dir   = component_dir / "__install__"
+    patches_dir   = component_dir / "patches"
+
+    reporter.update(target, Status.FETCH)
+
+    # --- Wipe all managed directories — clean slate ---
+    for d in (source_dir, sysroot_dir, build_dir, install_dir):
+        if d.exists():
+            shutil.rmtree(d)
+
+    # --- Export source tree at locked SHA ---
+    source_dir.mkdir()
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", sha],
+        cwd    = bare_path,
+        stdout = subprocess.PIPE,
+        stderr = subprocess.PIPE,
+    )
+    if archive.returncode != 0:
+        print(
+            f"ERROR: git archive failed for {target} at {sha[:16]}:\n"
+            f"       {archive.stderr.decode().strip()}",
+            file=sys.stderr,
+        )
+        reporter.update(target, Status.ERROR)
+        return False
+
+    extract = subprocess.run(
+        ["tar", "x", "-C", str(source_dir)],
+        input  = archive.stdout,
+        stderr = subprocess.PIPE,
+    )
+    if extract.returncode != 0:
+        print(
+            f"ERROR: tar extract failed for {target}:\n"
+            f"       {extract.stderr.decode().strip()}",
+            file=sys.stderr,
+        )
+        reporter.update(target, Status.ERROR)
+        return False
+
+    print(f"  {target}: checked out {sha[:16]}")
+
+    # --- Apply patches ---
+    if patches_dir.is_dir():
+        patch_files = sorted(patches_dir.glob("*.patch"))
+        if patch_files:
+            print(f"  {target}: applying {len(patch_files)} patch(es)")
+            for patch_file in patch_files:
+                patched = subprocess.run(
+                    ["patch", "-p1", "-i", str(patch_file)],
+                    cwd    = source_dir,
+                    stdout = subprocess.PIPE,
+                    stderr = subprocess.PIPE,
+                )
+                if patched.returncode != 0:
+                    print(
+                        f"ERROR: patch failed: {patch_file.name}\n"
+                        f"       {patched.stderr.decode().strip()}\n"
+                        f"       {patched.stdout.decode().strip()}",
+                        file=sys.stderr,
+                    )
+                    reporter.update(target, Status.ERROR)
+                    return False
+                print(f"  {target}: applied {patch_file.name}")
+
+    # --- Populate __sysroot__/ from dep buildtime artifacts ---
+    sysroot_dir.mkdir()
+    if not _populate_sysroot(target, instance, config, cache, sysroot_dir):
+        reporter.update(target, Status.ERROR)
+        return False
+
+    # --- Create empty __build__/ and __install__/ ---
+    build_dir.mkdir()
+    install_dir.mkdir()
+
+    # --- Write checked_out sentinel ---
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "checked_out").write_text(f"{sha}\n", encoding="utf-8")
+
+    reporter.update(target, Status.OK)
+    return True
+
+
+
 def verb_clear_cache(config, cache: TieredCache) -> bool:
     """Remove all local cache entries."""
     size_before = cache.local_size_bytes()
@@ -308,6 +552,8 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
         return verb_deps(target, config, cache, reporter, publish)
     elif verb == "fetch":
         return verb_fetch(target, config, reporter)
+    elif verb == "checkout":
+        return verb_checkout(target, config, cache, reporter)
     elif verb == "clear_cache":
         return verb_clear_cache(config, cache)
     elif verb in ("configure", "build", "test", "install", "package", "clean", "purge"):
