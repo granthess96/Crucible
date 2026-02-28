@@ -1,4 +1,6 @@
 # kiln.lock — auto-generated, commit this file
-curl 7161cb17c01dcff1dc5bf89a18437d9d729f1ecd
+glibc d2097651cc57834dbfcaa102ddfacae0d86cfb66
+kernel 2784b1b43af3711a6268a616eb8f41f9788c6e3a
+libpng ed217e3e601d8e462f7fd1e04bed43ac42212429
 openssl a7e992847de83aa36be0c399c89db3fb827b0be2
 zlib 51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf

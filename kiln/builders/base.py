@@ -107,10 +107,25 @@ class BuildDef(KilnComponent):
     configure_args: ClassVar[list[str]] = []
 
     runtime_globs:   ClassVar[list[str]] = [
-        "bin/**", "lib/*.so*", "lib/*.dylib*", "etc/**", "share/**",
+        "usr/bin/**",
+        "usr/lib/*.so*",
+        "usr/lib64/*.so*",
+        "usr/lib/*.dylib*",
+        "usr/etc/**",
+        "usr/share/**",
+        "etc/**",
+        "share/**",
     ]
     buildtime_globs: ClassVar[list[str]] = [
-        "include/**", "lib/*.a", "lib/pkgconfig/**", "lib/cmake/**",
+        "usr/include/**",
+        "usr/lib/*.a",
+        "usr/lib64/*.a",
+        "usr/lib/*.so*",
+        "usr/lib64/*.so*",
+        "usr/lib/pkgconfig/**",
+        "usr/lib64/pkgconfig/**",
+        "usr/lib/cmake/**",
+        "usr/lib64/cmake/**",
     ]
 
     def manifest_fields(self) -> dict[str, object]:
@@ -189,8 +204,10 @@ class CMakeBuild(BuildDef):
             'cmake', paths.source,
             f'-B{paths.build}',
             f'-DCMAKE_PREFIX_PATH={paths.sysroot}',
-            f'-DCMAKE_INSTALL_PREFIX={paths.install}',
+            f'-DCMAKE_INSTALL_PREFIX={paths.install}/usr',
             f'-G{self.cmake_generator}',
+            '-DCMAKE_C_COMPILER_WORKS=1',
+            '-DCMAKE_CXX_COMPILER_WORKS=1',
         ]
         if self.comp_flags:
             flags = ' '.join(self.comp_flags)

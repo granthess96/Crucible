@@ -36,6 +36,7 @@ Examples:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -369,11 +370,11 @@ def _populate_sysroot(
                 print(f"ERROR: failed to fetch dep {node.name}: {exc}", file=sys.stderr)
                 return False
 
-            buildtime_tarball = tmp_path / "buildtime.tar.zst"
+            buildtime_tarball = tmp_path / f"{node.name}.buildtime.tar.zst"
             if not buildtime_tarball.exists():
                 print(
                     f"ERROR: dep {node.name} has no buildtime.tar.zst in cache.\n"
-                    f"       Was it built with \'kiln package\'?",
+                    f"       Was it built with 'kiln package'?",
                     file=sys.stderr,
                 )
                 return False
@@ -587,15 +588,16 @@ def _check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bo
 
 
 def _forge_run(config, target: str, cmd: list[str],
-               reporter: Reporter, status: Status) -> bool:
+               reporter: Reporter, status: Status,
+               cwd: Path | None = None) -> bool:
     """Run cmd inside a ForgeInstance. Returns True on success."""
     from forge.instance import ForgeInstance
 
     reporter.update(target, status)
-    component_dir = config.components_dir / target
+    effective_cwd = cwd or config.components_dir / target
     try:
         with ForgeInstance(config) as instance:
-            rc = instance.run(cmd, cwd=component_dir)
+            rc = instance.run(cmd, cwd=effective_cwd)
         if rc != 0:
             reporter.update(target, Status.ERROR)
             print(f"ERROR: {target}: command exited {rc}", file=sys.stderr)
@@ -629,7 +631,8 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
         reporter.update(target, Status.OK)
         return True
 
-    ok = _forge_run(config, target, cmd, reporter, Status.CONFIG)
+    build_dir = config.components_dir / target / "__build__"
+    ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, cwd=build_dir)
     if ok:
         state_dir = config.build_root / ".kiln" / "state" / target
         (state_dir / "configured").write_text("ok\n")
@@ -651,7 +654,8 @@ def verb_build(target: str, config, reporter: Reporter) -> bool:
     paths = BuildPaths.for_component(target)
     cmd   = instance.build_command(paths)
 
-    ok = _forge_run(config, target, cmd, reporter, Status.BUILD)
+    build_dir = config.components_dir / target / "__build__"
+    ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -676,7 +680,8 @@ def verb_test(target: str, config, reporter: Reporter) -> bool:
         reporter.update(target, Status.OK)
         return True
 
-    ok = _forge_run(config, target, cmd, reporter, Status.TEST)
+    build_dir = config.components_dir / target / "__build__"
+    ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -696,7 +701,8 @@ def verb_install(target: str, config, reporter: Reporter) -> bool:
     paths = BuildPaths.for_component(target)
     cmd   = instance.install_command(paths)
 
-    ok = _forge_run(config, target, cmd, reporter, Status.INSTALL)
+    build_dir = config.components_dir / target / "__build__"
+    ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -824,6 +830,24 @@ def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) ->
     print(f"  {target}: {len(runtime_files)} runtime files, "
           f"{len(buildtime_files)} buildtime files")
 
+    # Refuse to package if both tarballs would be empty — almost certainly
+    # means install didn't run or installed to an unexpected path.
+    if not runtime_files and not buildtime_files:
+        print(
+            f"ERROR: {target}: no files matched any glob pattern.\n"
+            f"       Check that 'kiln install' ran successfully and that\n"
+            f"       the install prefix matches runtime_globs/buildtime_globs.",
+            file=sys.stderr,
+        )
+        reporter.update(target, Status.ERROR)
+        return False
+
+    # Warn if only one side is empty — unusual but not always wrong
+    if not runtime_files:
+        print(f"  WARNING: {target}: no runtime files matched — runtime tarball will be empty")
+    if not buildtime_files:
+        print(f"  WARNING: {target}: no buildtime files matched — buildtime tarball will be empty")
+
     # --- Pack into tarballs ---
     with tempfile.TemporaryDirectory(prefix="kiln-package-") as tmp:
         tmp_path = Path(tmp)
@@ -932,6 +956,17 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    # Re-exec inside user+mount namespace if not already root.
+    # Required for ForgeInstance mount operations (overlayfs, squashfs).
+    # Only needed for verbs that invoke forge — but simpler to always do it.
+    if os.geteuid() != 0:
+        os.execvp("unshare", [
+            "unshare", "--user", "--mount", "--map-root-user",
+            "--", sys.executable, *sys.argv,
+        ])
+        print("ERROR: unshare failed", file=sys.stderr)
+        return 1
+
     parser = make_parser()
     args   = parser.parse_args(argv)
 

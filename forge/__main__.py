@@ -116,12 +116,20 @@ def create_base_image(config, verbose: bool):
 # ---------------------------------------------------------------------------
 
 def main(argv=None) -> int:
+    # Re-exec inside a user+mount namespace if not already root.
+    # This gives us CAP_SYS_ADMIN for mounts without requiring sudo.
+    # The re-execed process sees itself as root (uid 0) inside the namespace.
+    if os.geteuid() != 0:
+        os.execvp("unshare", [
+            "unshare", "--user", "--mount", "--map-root-user",
+            "--", sys.executable, *sys.argv,
+        ])
+        # execvp replaces this process — never reached on success
+        print("Error: unshare failed", file=sys.stderr)
+        return 1
+
     parser = make_parser()
     args   = parser.parse_args(argv)
-
-    if os.geteuid() != 0:
-        print("Error: forge must be run as root.", file=sys.stderr)
-        return 1
 
     try:
         config = load_config()

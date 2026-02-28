@@ -36,7 +36,7 @@ from pathlib import Path
 
 from crucible.config import CrucibleConfig
 
-INSTANCES_DIR  = "/opt/forge/instances"
+INSTANCES_DIR  = Path.home() / ".kiln" / "instances"
 WORKSPACE_PATH = "/workspace"     # project root appears here inside chroot
 
 
@@ -76,7 +76,7 @@ class ForgeInstance:
         self.verbose      = verbose
         self._instance_dir: Path | None = None
         self._merged:       Path | None = None
-        self._mounted:      list[Path]  = []
+        self._mounted:      list[tuple] = []  # (Path, "fuse"|"kernel")
 
     # --- Context manager ---
 
@@ -104,7 +104,8 @@ class ForgeInstance:
         """
         target_dir = self._chroot_path(cwd or self.config.build_root)
         if command:
-            cmd_str    = ' '.join(str(c) for c in command)
+            import shlex
+            cmd_str    = ' '.join(shlex.quote(str(c)) for c in command)
             chroot_cmd = [
                 'chroot', str(self.merged),
                 '/bin/bash', '-c', f'cd {target_dir} && {cmd_str}'
@@ -130,7 +131,7 @@ class ForgeInstance:
     # --- Mount lifecycle ---
 
     def _setup(self):
-        os.makedirs(INSTANCES_DIR, exist_ok=True)
+        INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
         self._instance_dir = Path(tempfile.mkdtemp(
             dir=INSTANCES_DIR, prefix="forge-"
         ))
@@ -154,19 +155,17 @@ class ForgeInstance:
                     f"Check forge.toml [forge] settings or run 'forge --create'."
                 )
 
-        # 1. Base squashfs (read-only)
-        _run(['mount', '-t', 'squashfs', '-o', 'loop,ro',
-              str(base_sqsh), str(base_mount)], self.verbose)
-        self._mounted.append(base_mount)
+        # 1. Base squashfs — squashfuse (FUSE, no loop device, works in user namespace)
+        _run(['squashfuse', str(base_sqsh), str(base_mount)], self.verbose)
+        self._mounted.append((base_mount, 'fuse'))
 
-        # 2. Tools squashfs (read-only)
-        _run(['mount', '-t', 'squashfs', '-o', 'loop,ro',
-              str(tools_sqsh), str(tools_mount)], self.verbose)
-        self._mounted.append(tools_mount)
+        # 2. Tools squashfs — squashfuse
+        _run(['squashfuse', str(tools_sqsh), str(tools_mount)], self.verbose)
+        self._mounted.append((tools_mount, 'fuse'))
 
         # 3. tmpfs — upper and work must be siblings on the same filesystem
         _run(['mount', '-t', 'tmpfs', 'tmpfs', str(rw_dir)], self.verbose)
-        self._mounted.append(rw_dir)
+        self._mounted.append((rw_dir, 'kernel'))
 
         upper = rw_dir / "upper"
         work  = rw_dir / "work"
@@ -179,37 +178,48 @@ class ForgeInstance:
         _run(['mount', '-t', 'overlay', 'overlay',
               '-o', f'lowerdir={lowerdir},upperdir={upper},workdir={work}',
               str(self._merged)], self.verbose)
-        self._mounted.append(self._merged)
+        self._mounted.append((self._merged, 'kernel'))
 
-        # 5. proc and sys — fresh mounts (not bind)
-        for stub in ('proc', 'sys', 'dev', WORKSPACE_PATH.lstrip('/')):
+        # 5. Create mount point stubs — squashfs has no /dev /proc /sys /workspace
+        for stub in ('tmp', 'proc', 'sys', 'dev', WORKSPACE_PATH.lstrip('/')):
             (self._merged / stub).mkdir(exist_ok=True)
 
-        _run(['mount', '-t', 'proc',  'proc',  str(self._merged / 'proc')],
-             self.verbose)
-        self._mounted.append(self._merged / 'proc')
-
-        _run(['mount', '-t', 'sysfs', 'sysfs', str(self._merged / 'sys')],
-             self.verbose)
-        self._mounted.append(self._merged / 'sys')
-
-        # 6. Dev nodes — written into upper layer via merged view
-        create_dev_nodes(self._merged / 'dev')
+        # 6. Bind mount essential device nodes from host.
+        #    mknod requires real root — not available in user namespaces.
+        #    Bind mounting host devices gives fully functional nodes.
+        dev_nodes = ['null', 'zero', 'urandom', 'random', 'tty']
+        for node in dev_nodes:
+            host_node   = Path('/dev') / node
+            chroot_node = self._merged / 'dev' / node
+            chroot_node.touch()   # bind mount requires existing target
+            _run(['mount', '--bind', str(host_node), str(chroot_node)],
+                 self.verbose)
+            self._mounted.append((chroot_node, 'kernel'))
 
         # 7. Project root → /workspace
         workspace = self._merged / WORKSPACE_PATH.lstrip('/')
         _run(['mount', '--bind',
               str(self.config.build_root), str(workspace)], self.verbose)
-        self._mounted.append(workspace)
+        self._mounted.append((workspace, 'kernel'))
 
     def _teardown(self):
-        """Unmount in reverse order. Best-effort — always runs."""
-        for mount_point in reversed(self._mounted):
-            subprocess.run(
-                ['umount', str(mount_point)],
-                check=False,
-                capture_output=not self.verbose,
-            )
+        """
+        Unmount in reverse order. Best-effort — always runs.
+        squashfuse mounts use fusermount -u; kernel mounts use umount.
+        """
+        for mount_point, kind in reversed(self._mounted):
+            if kind == 'fuse':
+                subprocess.run(
+                    ['fusermount', '-u', str(mount_point)],
+                    check=False,
+                    capture_output=not self.verbose,
+                )
+            else:
+                subprocess.run(
+                    ['umount', str(mount_point)],
+                    check=False,
+                    capture_output=not self.verbose,
+                )
         if self._instance_dir and self._instance_dir.exists():
             shutil.rmtree(self._instance_dir, ignore_errors=True)
 
