@@ -58,13 +58,17 @@ class CachePermissionError(CacheError):
 class Artifact:
     """
     The three files that live at one cache key.
-    Paths are absolute — caller unpacks as needed.
+    Named by component for human-readable debugging:
+      <name>.runtime.tar.zst
+      <name>.buildtime.tar.zst
+      <name>.manifest.txt
     """
-    def __init__(self, base: Path):
-        self.base          = base
-        self.runtime       = base / "runtime.tar.zst"
-        self.buildtime     = base / "buildtime.tar.zst"
-        self.manifest_txt  = base / "manifest.txt"
+    def __init__(self, base: Path, name: str):
+        self.base         = base
+        self.name         = name
+        self.runtime      = base / f"{name}.runtime.tar.zst"
+        self.buildtime    = base / f"{name}.buildtime.tar.zst"
+        self.manifest_txt = base / f"{name}.manifest.txt"
 
     def is_complete(self) -> bool:
         """All three files must exist for the artifact to be valid."""
@@ -74,9 +78,22 @@ class Artifact:
             and self.manifest_txt.exists()
         )
 
+    @classmethod
+    def find(cls, base: Path) -> "Artifact | None":
+        """
+        Find an artifact in base/ by scanning for *.manifest.txt.
+        Returns None if not found or ambiguous.
+        Used when the component name is not known (e.g. cache inspection).
+        """
+        manifests = list(base.glob("*.manifest.txt"))
+        if len(manifests) != 1:
+            return None
+        name = manifests[0].name.removesuffix(".manifest.txt")
+        return cls(base, name)
+
     def __repr__(self) -> str:
         ok = "complete" if self.is_complete() else "incomplete"
-        return f"<Artifact {self.base.parent.name}{self.base.name} {ok}>"
+        return f"<Artifact {self.name} {self.base.parent.name}{self.base.name[-8:]} {ok}>"
 
 
 # ---------------------------------------------------------------------------
@@ -91,12 +108,12 @@ class CacheBackend(ABC):
     """
 
     @abstractmethod
-    def stat(self, key: str) -> bool:
+    def stat(self, key: str, name: str) -> bool:
         """Return True if artifact exists and is complete."""
         ...
 
     @abstractmethod
-    def fetch(self, key: str, dest: Path) -> None:
+    def fetch(self, key: str, name: str, dest: Path) -> None:
         """
         Copy artifact files into dest/.
         dest will be created if it doesn't exist.
@@ -104,10 +121,11 @@ class CacheBackend(ABC):
         ...
 
     @abstractmethod
-    def store(self, key: str, src: Path) -> None:
+    def store(self, key: str, name: str, src: Path) -> None:
         """
         Store artifact from src/ under key.
-        src must contain runtime.tar.zst, buildtime.tar.zst, manifest.txt
+        src must contain <name>.runtime.tar.zst, <name>.buildtime.tar.zst,
+        <name>.manifest.txt
         """
         ...
 
@@ -146,29 +164,30 @@ class LocalDiskCache(CacheBackend):
     def _artifact_path(self, key: str) -> Path:
         return self._root / key[:2] / key[2:]
 
-    def stat(self, key: str) -> bool:
+    def stat(self, key: str, name: str) -> bool:
         try:
-            return Artifact(self._artifact_path(key)).is_complete()
+            return Artifact(self._artifact_path(key), name).is_complete()
         except Exception as exc:
             raise CacheError(key, f"stat failed: {exc}") from exc
 
-    def fetch(self, key: str, dest: Path) -> None:
-        src = self._artifact_path(key)
-        if not Artifact(src).is_complete():
+    def fetch(self, key: str, name: str, dest: Path) -> None:
+        src      = self._artifact_path(key)
+        artifact = Artifact(src, name)
+        if not artifact.is_complete():
             raise CacheError(key, "artifact not found or incomplete in local cache")
         dest.mkdir(parents=True, exist_ok=True)
-        for filename in ("runtime.tar.zst", "buildtime.tar.zst", "manifest.txt"):
-            shutil.copy2(src / filename, dest / filename)
+        for f in (artifact.runtime, artifact.buildtime, artifact.manifest_txt):
+            shutil.copy2(f, dest / f.name)
         log.debug(f"local fetch {key[:12]} → {dest}")
 
-    def store(self, key: str, src: Path) -> None:
-        artifact = Artifact(src)
+    def store(self, key: str, name: str, src: Path) -> None:
+        artifact = Artifact(src, name)
         if not artifact.is_complete():
             raise CacheError(key, f"source artifact incomplete — missing files in {src}")
         dest = self._artifact_path(key)
         dest.mkdir(parents=True, exist_ok=True)
-        for filename in ("runtime.tar.zst", "buildtime.tar.zst", "manifest.txt"):
-            shutil.copy2(src / filename, dest / filename)
+        for f in (artifact.runtime, artifact.buildtime, artifact.manifest_txt):
+            shutil.copy2(f, dest / f.name)
         log.debug(f"local store {key[:12]} ← {src}")
 
     def remove(self, key: str) -> None:
@@ -223,33 +242,34 @@ class LocalPathGlobalCache(CacheBackend):
     def _artifact_path(self, key: str) -> Path:
         return self._root / key[:2] / key[2:]
 
-    def stat(self, key: str) -> bool:
+    def stat(self, key: str, name: str) -> bool:
         try:
-            return Artifact(self._artifact_path(key)).is_complete()
+            return Artifact(self._artifact_path(key), name).is_complete()
         except Exception as exc:
             raise CacheError(key, f"global stat failed: {exc}") from exc
 
-    def fetch(self, key: str, dest: Path) -> None:
-        src = self._artifact_path(key)
-        if not Artifact(src).is_complete():
+    def fetch(self, key: str, name: str, dest: Path) -> None:
+        src      = self._artifact_path(key)
+        artifact = Artifact(src, name)
+        if not artifact.is_complete():
             raise CacheError(key, "artifact not found in global cache")
         dest.mkdir(parents=True, exist_ok=True)
-        for filename in ("runtime.tar.zst", "buildtime.tar.zst", "manifest.txt"):
-            shutil.copy2(src / filename, dest / filename)
+        for f in (artifact.runtime, artifact.buildtime, artifact.manifest_txt):
+            shutil.copy2(f, dest / f.name)
 
-    def store(self, key: str, src: Path) -> None:
+    def store(self, key: str, name: str, src: Path) -> None:
         if not self._publish_allowed:
             raise CachePermissionError(
                 key,
                 "global cache is read-only — use --publish with CI credentials to write"
             )
-        artifact = Artifact(src)
+        artifact = Artifact(src, name)
         if not artifact.is_complete():
             raise CacheError(key, f"source artifact incomplete in {src}")
         dest = self._artifact_path(key)
         dest.mkdir(parents=True, exist_ok=True)
-        for filename in ("runtime.tar.zst", "buildtime.tar.zst", "manifest.txt"):
-            shutil.copy2(src / filename, dest / filename)
+        for f in (artifact.runtime, artifact.buildtime, artifact.manifest_txt):
+            shutil.copy2(f, dest / f.name)
 
     def remove(self, key: str) -> None:
         if not self._publish_allowed:
@@ -290,61 +310,59 @@ class TieredCache:
         self._local   = local
         self._global  = global_
 
-    def stat(self, key: str) -> bool:
+    def stat(self, key: str, name: str) -> bool:
         """
         True if artifact exists in local or global cache.
         Raises CacheError if either backend is unreachable.
         """
-        if self._local.stat(key):
+        if self._local.stat(key, name):
             return True
         if self._global is not None:
-            return self._global.stat(key)
+            return self._global.stat(key, name)
         return False
 
-    def fetch(self, key: str, dest: Path) -> None:
+    def fetch(self, key: str, name: str, dest: Path) -> None:
         """
         Fetch artifact to dest/.
         Global hits are promoted to local cache first.
         Raises CacheMiss if not found in either tier.
         """
         # Local hit — fast path
-        if self._local.stat(key):
+        if self._local.stat(key, name):
             log.debug(f"cache: local hit {key[:12]}")
-            self._local.fetch(key, dest)
+            self._local.fetch(key, name, dest)
             return
 
         # Global hit — fetch-through to local first
-        if self._global is not None and self._global.stat(key):
+        if self._global is not None and self._global.stat(key, name):
             log.info(f"cache: global hit {key[:12]}, promoting to local")
-            # Fetch into a temp location under local cache root, then store
             import tempfile
             with tempfile.TemporaryDirectory(
                 dir=self._local._root if hasattr(self._local, '_root') else None
             ) as tmp:
                 tmp_path = Path(tmp)
-                self._global.fetch(key, tmp_path)
-                self._local.store(key, tmp_path)
-            # Now serve from local
-            self._local.fetch(key, dest)
+                self._global.fetch(key, name, tmp_path)
+                self._local.store(key, name, tmp_path)
+            self._local.fetch(key, name, dest)
             return
 
         raise CacheMiss(key)
 
-    def store_local(self, key: str, src: Path) -> None:
+    def store_local(self, key: str, name: str, src: Path) -> None:
         """Store artifact to local cache only (normal build output)."""
-        self._local.store(key, src)
+        self._local.store(key, name, src)
         log.info(f"cache: stored local {key[:12]}")
 
-    def publish(self, key: str, src: Path) -> None:
+    def publish(self, key: str, name: str, src: Path) -> None:
         """
         Store artifact to both local and global cache.
         Requires global backend to have publish_allowed=True.
         Used by --publish (CI only).
         """
-        self._local.store(key, src)
+        self._local.store(key, name, src)
         if self._global is None:
             raise CacheError(key, "no global cache configured — cannot publish")
-        self._global.store(key, src)
+        self._global.store(key, name, src)
         log.info(f"cache: published {key[:12]} to global")
 
     def clear_local(self) -> int:
@@ -379,7 +397,6 @@ class CacheMiss(Exception):
 # ---------------------------------------------------------------------------
 # Factory — build TieredCache from KilnConfig
 # ---------------------------------------------------------------------------
-
 
 def cache_from_config(config) -> TieredCache:
     """

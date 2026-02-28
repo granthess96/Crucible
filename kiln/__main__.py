@@ -130,10 +130,32 @@ def infer_target(config, cwd: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 class _CacheStatAdapter(CacheBackend):
+    """
+    Adapter used by the DAG resolver — checks cache existence by key only,
+    without needing the component name. Uses Artifact.find() to scan by glob.
+    """
     def __init__(self, tiered: TieredCache):
         self._t = tiered
+
     def stat(self, key: str) -> bool:
-        return self._t.stat(key)
+        # The resolver only needs to know if an artifact exists.
+        # Use the local backend's _artifact_path directly and scan for any
+        # *.manifest.txt — avoids needing the component name at resolve time.
+        local = self._t._local
+        if hasattr(local, '_artifact_path'):
+            from kiln.cache import Artifact
+            artifact = Artifact.find(local._artifact_path(key))
+            if artifact is not None and artifact.is_complete():
+                return True
+        # Fallback: try global if present
+        if self._t._global is not None:
+            global_b = self._t._global
+            if hasattr(global_b, '_artifact_path'):
+                from kiln.cache import Artifact
+                artifact = Artifact.find(global_b._artifact_path(key))
+                if artifact is not None and artifact.is_complete():
+                    return True
+        return False
 
 
 class _RegistryStatAdapter(RegistryBackend):
@@ -342,7 +364,7 @@ def _populate_sysroot(
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             try:
-                cache.fetch(node.manifest_hash, tmp_path)
+                cache.fetch(node.manifest_hash, node.name, tmp_path)
             except (CacheMiss, CacheError) as exc:
                 print(f"ERROR: failed to fetch dep {node.name}: {exc}", file=sys.stderr)
                 return False
@@ -537,6 +559,336 @@ def verb_clear_cache(config, cache: TieredCache) -> bool:
     return True
 
 
+def _get_builder(target: str, config):
+    """Load component registry and instantiate the builder for target."""
+    from kiln.registry import ComponentRegistry, RegistryError
+    try:
+        reg = ComponentRegistry(config.components_dir)
+    except RegistryError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None, None
+    if target not in reg:
+        print(f"ERROR: component '{target}' not found", file=sys.stderr)
+        return None, None
+    return reg, reg.instantiate(target)
+
+
+def _check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bool:
+    """Return True if sentinel file exists, print clear error if not."""
+    sentinel_file = config.build_root / ".kiln" / "state" / target / sentinel
+    if not sentinel_file.exists():
+        print(
+            f"ERROR: {target} has not been {sentinel.replace('_', ' ')}.\n"
+            f"       Run 'kiln {missing_verb}' first.",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _forge_run(config, target: str, cmd: list[str],
+               reporter: Reporter, status: Status) -> bool:
+    """Run cmd inside a ForgeInstance. Returns True on success."""
+    from forge.instance import ForgeInstance
+
+    reporter.update(target, status)
+    component_dir = config.components_dir / target
+    try:
+        with ForgeInstance(config) as instance:
+            rc = instance.run(cmd, cwd=component_dir)
+        if rc != 0:
+            reporter.update(target, Status.ERROR)
+            print(f"ERROR: {target}: command exited {rc}", file=sys.stderr)
+            return False
+        return True
+    except Exception as exc:
+        reporter.update(target, Status.ERROR)
+        print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
+        return False
+
+
+def verb_configure(target: str, config, reporter: Reporter) -> bool:
+    """Run build system configure step inside forge."""
+    from kiln.builders.base import BuildPaths
+
+    if not _check_sentinel(config, target, "checked_out", "checkout"):
+        return False
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    paths = BuildPaths.for_component(target)
+    cmd   = instance.configure_command(paths)
+
+    if not cmd:
+        print(f"  {target}: no configure step — skipping")
+        # Write sentinel so build can proceed
+        state_dir = config.build_root / ".kiln" / "state" / target
+        (state_dir / "configured").write_text("skipped\n")
+        reporter.update(target, Status.OK)
+        return True
+
+    ok = _forge_run(config, target, cmd, reporter, Status.CONFIG)
+    if ok:
+        state_dir = config.build_root / ".kiln" / "state" / target
+        (state_dir / "configured").write_text("ok\n")
+        reporter.update(target, Status.OK)
+    return ok
+
+
+def verb_build(target: str, config, reporter: Reporter) -> bool:
+    """Compile inside forge."""
+    from kiln.builders.base import BuildPaths
+
+    if not _check_sentinel(config, target, "configured", "configure"):
+        return False
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    paths = BuildPaths.for_component(target)
+    cmd   = instance.build_command(paths)
+
+    ok = _forge_run(config, target, cmd, reporter, Status.BUILD)
+    if ok:
+        reporter.update(target, Status.OK)
+    return ok
+
+
+def verb_test(target: str, config, reporter: Reporter) -> bool:
+    """Run test suite inside forge."""
+    from kiln.builders.base import BuildPaths
+
+    if not _check_sentinel(config, target, "configured", "configure"):
+        return False
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    paths = BuildPaths.for_component(target)
+    cmd   = instance.test_command(paths)
+
+    if not cmd:
+        print(f"  {target}: no test suite defined — skipping")
+        reporter.update(target, Status.OK)
+        return True
+
+    ok = _forge_run(config, target, cmd, reporter, Status.TEST)
+    if ok:
+        reporter.update(target, Status.OK)
+    return ok
+
+
+def verb_install(target: str, config, reporter: Reporter) -> bool:
+    """DESTDIR install into __install__/ inside forge."""
+    from kiln.builders.base import BuildPaths
+
+    if not _check_sentinel(config, target, "configured", "configure"):
+        return False
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    paths = BuildPaths.for_component(target)
+    cmd   = instance.install_command(paths)
+
+    ok = _forge_run(config, target, cmd, reporter, Status.INSTALL)
+    if ok:
+        reporter.update(target, Status.OK)
+    return ok
+
+
+def verb_clean(target: str, config, reporter: Reporter) -> bool:
+    """Wipe __build__/ and __install__/ — keep source and sysroot."""
+    import shutil
+    component_dir = config.components_dir / target
+    for d in ("__build__", "__install__"):
+        path = component_dir / d
+        if path.exists():
+            shutil.rmtree(path)
+            path.mkdir()
+            print(f"  {target}: cleared {d}/")
+    # Clear configured sentinel so configure must re-run
+    sentinel = config.build_root / ".kiln" / "state" / target / "configured"
+    if sentinel.exists():
+        sentinel.unlink()
+    reporter.update(target, Status.OK)
+    return True
+
+
+def verb_purge(target: str, config, reporter: Reporter) -> bool:
+    """Wipe everything — source, sysroot, build, install."""
+    import shutil
+    component_dir = config.components_dir / target
+    for d in ("__source__", "__sysroot__", "__build__", "__install__"):
+        path = component_dir / d
+        if path.exists():
+            shutil.rmtree(path)
+            print(f"  {target}: cleared {d}/")
+    # Clear sentinels
+    state_dir = config.build_root / ".kiln" / "state" / target
+    for sentinel in ("checked_out", "configured"):
+        f = state_dir / sentinel
+        if f.exists():
+            f.unlink()
+    reporter.update(target, Status.OK)
+    return True
+
+
+def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) -> bool:
+    """
+    Split __install__/ into runtime and buildtime tarballs, write manifest,
+    store in local artifact cache.
+
+    runtime.tar.zst   — .so libs, binaries, etc (runtime_globs)
+    buildtime.tar.zst — headers, .a libs, pkgconfig (buildtime_globs)
+    manifest.txt      — full canonical manifest fields
+
+    Files are named <component>.{runtime,buildtime}.tar.zst and
+    <component>.manifest.txt for human-readable cache inspection.
+    """
+    import fnmatch
+    import json
+    import subprocess
+    import tempfile
+
+    if not _check_sentinel(config, target, "configured", "configure"):
+        return False
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    component_dir = config.components_dir / target
+    install_dir   = component_dir / "__install__"
+
+    if not install_dir.exists() or not any(install_dir.rglob("*")):
+        print(
+            f"ERROR: {target}: __install__/ is empty.\n"
+            f"       Run 'kiln install' first.",
+            file=sys.stderr,
+        )
+        return False
+
+    reporter.update(target, Status.PACKAGE)
+
+    # --- Resolve manifest hash ---
+    from kiln.dag import Resolver, ResolvedDAG, ResolveError
+    from kiln.cache import cache_from_config
+
+    lock     = KilnLock(config.lock_file)
+    resolver = Resolver(
+        components_root = config.components_dir,
+        cache           = _CacheStatAdapter(cache),
+        registry        = _RegistryStatAdapter(),
+        lock            = lock,
+        forge_base_hash = config.forge.base_image or "sha256:unconfigured",
+        toolchain_hash  = config.forge.toolchain  or "sha256:unconfigured",
+        max_weight      = config.scheduler.max_weight,
+    )
+    result = resolver.resolve(target)
+    if isinstance(result, ResolveError):
+        print(f"ERROR: manifest resolution failed: {result.message}", file=sys.stderr)
+        reporter.update(target, Status.ERROR)
+        return False
+
+    nodes       = result.components if isinstance(result, ResolvedDAG) else result.dag.components
+    target_node = next((n for n in nodes if n.name == target), None)
+    if target_node is None:
+        print(f"ERROR: {target} not found in resolved DAG", file=sys.stderr)
+        reporter.update(target, Status.ERROR)
+        return False
+
+    manifest_hash = target_node.manifest_hash
+
+    # --- Collect files by glob pattern ---
+    def collect(globs: list[str]) -> list[Path]:
+        matched = []
+        for f in sorted(install_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(install_dir)
+            for pattern in globs:
+                if fnmatch.fnmatch(str(rel), pattern):
+                    matched.append(f)
+                    break
+        return matched
+
+    runtime_files   = collect(instance.runtime_globs)
+    buildtime_files = collect(instance.buildtime_globs)
+
+    print(f"  {target}: {len(runtime_files)} runtime files, "
+          f"{len(buildtime_files)} buildtime files")
+
+    # --- Pack into tarballs ---
+    with tempfile.TemporaryDirectory(prefix="kiln-package-") as tmp:
+        tmp_path = Path(tmp)
+
+        def pack(files: list[Path], tarball: Path) -> bool:
+            if not files:
+                # Write an empty tarball — artifact must be complete
+                result = subprocess.run(
+                    ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
+                     "--files-from=/dev/null"],
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                # Write file list for tar --files-from
+                filelist = tmp_path / "filelist.txt"
+                filelist.write_text(
+                    "\n".join(str(f.relative_to(install_dir)) for f in files)
+                )
+                result = subprocess.run(
+                    ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
+                     "-C", str(install_dir),
+                     "--files-from", str(filelist)],
+                    stderr=subprocess.PIPE,
+                )
+            if result.returncode != 0:
+                print(
+                    f"ERROR: tar failed: {result.stderr.decode().strip()}",
+                    file=sys.stderr,
+                )
+                return False
+            return True
+
+        runtime_tarball   = tmp_path / f"{target}.runtime.tar.zst"
+        buildtime_tarball = tmp_path / f"{target}.buildtime.tar.zst"
+        manifest_file     = tmp_path / f"{target}.manifest.txt"
+
+        if not pack(runtime_files, runtime_tarball):
+            reporter.update(target, Status.ERROR)
+            return False
+
+        if not pack(buildtime_files, buildtime_tarball):
+            reporter.update(target, Status.ERROR)
+            return False
+
+        # --- Write manifest ---
+        manifest_data = instance.manifest_fields()
+        manifest_data["manifest_hash"] = manifest_hash
+        manifest_file.write_text(
+            json.dumps(manifest_data, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        # --- Store in cache ---
+        try:
+            cache.store_local(manifest_hash, target, tmp_path)
+        except Exception as exc:
+            print(f"ERROR: cache store failed: {exc}", file=sys.stderr)
+            reporter.update(target, Status.ERROR)
+            return False
+
+    print(f"  {target}: cached as {manifest_hash[:16]}")
+    reporter.update(target, Status.OK)
+    return True
+
+
 def verb_not_implemented(verb: str, target: str) -> bool:
     print(f"  [{verb}] {target} — not yet implemented")
     return True
@@ -554,10 +906,22 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
         return verb_fetch(target, config, reporter)
     elif verb == "checkout":
         return verb_checkout(target, config, cache, reporter)
+    elif verb == "configure":
+        return verb_configure(target, config, reporter)
+    elif verb == "build":
+        return verb_build(target, config, reporter)
+    elif verb == "test":
+        return verb_test(target, config, reporter)
+    elif verb == "install":
+        return verb_install(target, config, reporter)
+    elif verb == "clean":
+        return verb_clean(target, config, reporter)
+    elif verb == "purge":
+        return verb_purge(target, config, reporter)
     elif verb == "clear_cache":
         return verb_clear_cache(config, cache)
-    elif verb in ("configure", "build", "test", "install", "package", "clean", "purge"):
-        return verb_not_implemented(verb, target)
+    elif verb == "package":
+        return verb_package(target, config, cache, reporter)
     else:
         print(f"ERROR: unknown verb '{verb}'", file=sys.stderr)
         return False

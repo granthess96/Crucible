@@ -5,13 +5,59 @@ Base classes for all kiln build and assembly components.
 Two class hierarchies:
   BuildDef    — compiles source into runtime + buildtime artifacts
   AssemblyDef — composes cached artifacts into environments or images
+
+BuildDef subclasses implement *_command() methods that return lists of
+strings — commands to run inside the forge chroot. They receive a
+BuildPaths instance carrying the chroot-internal paths, so the builder
+never needs to know where anything lives on the host.
+
+Verb → method mapping:
+  kiln configure  →  configure_command()
+  kiln build      →  build_command()
+  kiln test       →  test_command()      (returns [] if no tests)
+  kiln install    →  install_command()
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+import os
+from abc import ABC
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
+
+
+# ---------------------------------------------------------------------------
+# BuildPaths — chroot-internal paths passed to all command methods
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BuildPaths:
+    """
+    All paths are strings representing locations inside the forge chroot.
+    Derived from the component name and the fixed /workspace/ mount point.
+
+    Example for component 'zlib':
+      source  = /workspace/components/zlib/__source__
+      build   = /workspace/components/zlib/__build__
+      sysroot = /workspace/components/zlib/__sysroot__
+      install = /workspace/components/zlib/__install__
+    """
+    source:  str
+    build:   str
+    sysroot: str
+    install: str
+
+    @classmethod
+    def for_component(cls, name: str, workspace: str = "/workspace") -> BuildPaths:
+        """Construct BuildPaths for a named component at the standard locations."""
+        base = f"{workspace}/components/{name}"
+        return cls(
+            source  = f"{base}/__source__",
+            build   = f"{base}/__build__",
+            sysroot = f"{base}/__sysroot__",
+            install = f"{base}/__install__",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -21,42 +67,24 @@ from typing import ClassVar
 class KilnComponent(ABC):
     """
     Shared base for all component types — both BuildDef and AssemblyDef.
-
     Class attributes are declared here and overridden in subclasses.
-    Instance attributes are set by the executor during a build run.
     """
 
     # --- Identity ---
-    name:    ClassVar[str]           # must match the components/ directory name
+    name:    ClassVar[str]
     version: ClassVar[str]
 
     # --- DAG ---
-    deps: ClassVar[list[str]] = []   # short names, resolved via components/ filesystem
+    deps: ClassVar[list[str]] = []
 
     # --- Scheduler ---
-    build_weight: ClassVar[int] = 1  # relative resource cost
-                                     # build_weight > max_weight → solo mode (still runs)
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        # Ensure concrete subclasses declare name and version.
-        # Abstract intermediates (AutotoolsBuild, CMakeBuild etc.) are exempt.
-        if not getattr(cls, '__abstractmethods__', None):
-            if not hasattr(cls, 'name') or cls.name is KilnComponent.__dict__.get('name'):
-                pass   # will be caught at load time by the registry, not here
-            if not hasattr(cls, 'version'):
-                pass   # same
+    build_weight: ClassVar[int] = 1
 
     def manifest_fields(self) -> dict[str, object]:
-        """
-        Returns an ordered dict of fields that contribute to the manifest hash.
-        Subclasses must call super() and extend the result — never replace it.
-        Fields must be deterministic: no timestamps, no host paths, no PIDs.
-        """
         return {
             "component": self.name,
             "version":   self.version,
-            "deps":      sorted(self.deps),   # sorted for determinism
+            "deps":      sorted(self.deps),
         }
 
     def __repr__(self) -> str:
@@ -64,44 +92,25 @@ class KilnComponent(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Hierarchy 1: BuildDef — produces artifacts via compilation
+# Hierarchy 1: BuildDef
 # ---------------------------------------------------------------------------
 
 class BuildDef(KilnComponent):
     """
-    Compiles source (fetched via git) into a runtime and buildtime artifact pair.
-
-    Lifecycle (each step is a discrete kiln verb):
-        deps → fetch → configure → build → test → install → package
+    Compiles source into a runtime and buildtime artifact pair.
+    Lifecycle: deps → fetch → checkout → configure → build → test → install → package
     """
 
-    # --- Source ---
-    source: ClassVar[dict] = {}
-    # Expected shape:
-    #   { "git": "https://...", "ref": "v1.2.3" }
-    # ref is a tag, branch, or commit SHA.
-    # kiln.lock stores the resolved commit SHA — ref is only used on first fetch.
+    source:         ClassVar[dict]      = {}
+    comp_flags:     ClassVar[list[str]] = []
+    link_flags:     ClassVar[list[str]] = []
+    configure_args: ClassVar[list[str]] = []
 
-    # --- Build flags (passed through to the build system) ---
-    comp_flags:      ClassVar[list[str]] = []
-    link_flags:      ClassVar[list[str]] = []
-    configure_args:  ClassVar[list[str]] = []
-
-    # --- Package split globs ---
-    # Base class defaults cover the common case.
-    # Override only when a component is non-standard.
     runtime_globs:   ClassVar[list[str]] = [
-        "bin/**",
-        "lib/*.so*",
-        "lib/*.dylib*",
-        "etc/**",
-        "share/**",
+        "bin/**", "lib/*.so*", "lib/*.dylib*", "etc/**", "share/**",
     ]
     buildtime_globs: ClassVar[list[str]] = [
-        "include/**",
-        "lib/*.a",
-        "lib/pkgconfig/**",
-        "lib/cmake/**",
+        "include/**", "lib/*.a", "lib/pkgconfig/**", "lib/cmake/**",
     ]
 
     def manifest_fields(self) -> dict[str, object]:
@@ -110,172 +119,187 @@ class BuildDef(KilnComponent):
             "kind":           "build",
             "builder":        self.__class__.__name__,
             "source_git":     self.source.get("git", ""),
-            # source_commit is filled in at resolve time from kiln.lock
-            # builder_hash is filled in at resolve time (hash of build.py)
-            # patches_hash  is filled in at resolve time (hash of patches/ tree)
             "comp_flags":     self.comp_flags,
             "link_flags":     self.link_flags,
             "configure_args": self.configure_args,
         })
         return fields
 
-    # --- Lifecycle hooks ---
-    # Each method corresponds to one kiln verb.
-    # Base class implementations are reasonable defaults.
-    # Override in subclass only when the component needs non-standard behaviour.
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        raise NotImplementedError(f"{self.__class__.__name__} must implement configure_command()")
 
-    def do_fetch(self, src_dir: Path) -> None:
-        """Fetch source into src_dir. Default: git clone/checkout."""
-        raise NotImplementedError
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        raise NotImplementedError(f"{self.__class__.__name__} must implement build_command()")
 
-    def do_configure(self, src_dir: Path, build_dir: Path, sysroot: Path) -> None:
-        """Run configure step (autotools, cmake, meson etc.)"""
-        raise NotImplementedError
+    def test_command(self, paths: BuildPaths) -> list[str]:
+        return []   # default: no tests
 
-    def do_build(self, build_dir: Path) -> None:
-        """Compile."""
-        raise NotImplementedError
-
-    def do_test(self, build_dir: Path) -> None:
-        """Run test suite. Default: no-op (override to enable)."""
-        pass
-
-    def do_install(self, build_dir: Path, install_dir: Path) -> None:
-        """DESTDIR install into install_dir."""
-        raise NotImplementedError
-
-    def do_package(self, install_dir: Path) -> tuple[Path, Path]:
-        """
-        Split install_dir into runtime and buildtime tarballs.
-        Returns (runtime_tarball, buildtime_tarball).
-        Default implementation uses runtime_globs / buildtime_globs.
-        """
-        raise NotImplementedError
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        raise NotImplementedError(f"{self.__class__.__name__} must implement install_command()")
 
 
 # ---------------------------------------------------------------------------
-# Concrete BuildDef subclasses — one per supported build system
+# Concrete BuildDef subclasses
 # ---------------------------------------------------------------------------
 
 class AutotoolsBuild(BuildDef):
     """./configure && make && make install"""
 
-    configure_script: ClassVar[str] = "./configure"   # override if non-standard
+    configure_script: ClassVar[str] = "configure"   # relative to __source__/
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
         fields["configure_script"] = self.configure_script
         return fields
 
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        cflags  = f"-I{paths.sysroot}/usr/include {' '.join(self.comp_flags)}".strip()
+        ldflags = f"-L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
+        pkg_config_path = (
+            f"{paths.sysroot}/usr/lib/pkgconfig"
+            f":{paths.sysroot}/usr/lib64/pkgconfig"
+        )
+        return [
+            f"{paths.source}/{self.configure_script}",
+            f"--prefix={paths.install}",
+            f"PKG_CONFIG_PATH={pkg_config_path}",
+            f"CFLAGS={cflags}",
+            f"LDFLAGS={ldflags}",
+        ] + self.configure_args
+
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        return ['make', f'-j{os.cpu_count() or 4}']
+
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        return ['make', 'install']
+
 
 class CMakeBuild(BuildDef):
     """cmake configure + build + install"""
 
-    cmake_generator: ClassVar[str] = "Ninja"   # Ninja is faster than make
+    cmake_generator: ClassVar[str] = "Ninja"
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
         fields["cmake_generator"] = self.cmake_generator
         return fields
 
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        cmd = [
+            'cmake', paths.source,
+            f'-B{paths.build}',
+            f'-DCMAKE_PREFIX_PATH={paths.sysroot}',
+            f'-DCMAKE_INSTALL_PREFIX={paths.install}',
+            f'-G{self.cmake_generator}',
+        ]
+        if self.comp_flags:
+            flags = ' '.join(self.comp_flags)
+            cmd += [f'-DCMAKE_C_FLAGS={flags}', f'-DCMAKE_CXX_FLAGS={flags}']
+        if self.link_flags:
+            cmd.append(f'-DCMAKE_EXE_LINKER_FLAGS={" ".join(self.link_flags)}')
+        return cmd + self.configure_args
+
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        return ['cmake', '--build', paths.build,
+                '--parallel', str(os.cpu_count() or 4)]
+
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        return ['cmake', '--install', paths.build]
+
 
 class MakeBuild(BuildDef):
     """Plain Makefile — no configure step."""
 
-    make_targets: ClassVar[list[str]] = ["all"]
-    install_targets: ClassVar[list[str]] = ["install"]
+    make_targets:    ClassVar[list[str]] = ['all']
+    install_targets: ClassVar[list[str]] = ['install']
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
-        fields["make_targets"]   = self.make_targets
-        fields["install_targets"] = self.install_targets
+        fields['make_targets']    = self.make_targets
+        fields['install_targets'] = self.install_targets
         return fields
+
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        return []   # no configure step
+
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        return ['make', f'-j{os.cpu_count() or 4}'] + self.make_targets
+
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        return ['make', f'PREFIX={paths.install}'] + self.install_targets
 
 
 class MesonBuild(BuildDef):
     """meson setup + meson compile + meson install"""
-    pass
+
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        return [
+            'meson', 'setup',
+            paths.build, paths.source,
+            f'--prefix={paths.install}',
+            f'--pkg-config-path={paths.sysroot}/usr/lib/pkgconfig',
+        ] + self.configure_args
+
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        return ['meson', 'compile', '-C', paths.build,
+                '-j', str(os.cpu_count() or 4)]
+
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        return ['meson', 'install', '-C', paths.build]
 
 
 class ScriptBuild(BuildDef):
-    """
-    Arbitrary build logic — override the do_* methods directly.
-    Use when no standard build system applies.
-    """
-    pass
+    """Arbitrary build logic — override *_command() methods directly."""
+
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        return []
+
+    def build_command(self, paths: BuildPaths) -> list[str]:
+        raise NotImplementedError(f"{self.__class__.__name__} must implement build_command()")
+
+    def install_command(self, paths: BuildPaths) -> list[str]:
+        raise NotImplementedError(f"{self.__class__.__name__} must implement install_command()")
 
 
 # ---------------------------------------------------------------------------
-# Hierarchy 2: AssemblyDef — composes artifacts into environments or images
+# Hierarchy 2: AssemblyDef
 # ---------------------------------------------------------------------------
 
 class AssemblyDef(KilnComponent):
     """
     Composes existing cached artifacts into a deployable environment or image.
-
-    Does NOT compile anything.
-    Does NOT use forge/chroot — operates on the host, manipulates artifacts.
+    Does NOT compile. Does NOT use forge.
     Output goes to the container registry, not the artifact cache.
-
-    Lifecycle:
-        deps → assemble → publish
     """
 
-    # AssemblyDef has no source git — inputs are artifact cache keys.
-    # Optional: config files or overlay content committed to the meta-build repo.
     config_dir: ClassVar[Path | None] = None
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
-        fields.update({
-            "kind":    "assembly",
-            "builder": self.__class__.__name__,
-        })
+        fields.update({"kind": "assembly", "builder": self.__class__.__name__})
         return fields
 
-    def do_assemble(
-        self,
-        artifact_inputs: dict[str, Path],    # name → unpacked BuildDef artifact path
-        image_inputs:    dict[str, object],  # name → pulled AssemblyDef OCI image
-        output_dir:      Path,
-    ) -> None:
-        """
-        Compose inputs into output_dir.
-        The executor will push output_dir to the registry after this returns.
-        """
+    def assemble_command(self, artifact_inputs: dict[str, Path],
+                         output_dir: Path) -> None:
         raise NotImplementedError
 
 
-# ---------------------------------------------------------------------------
-# Concrete AssemblyDef subclasses
-# ---------------------------------------------------------------------------
-
 class ChrootAssembly(AssemblyDef):
-    """
-    Assembles the forge base SquashFS image.
-    Output: base.sqsh → registry artifact consumed by all BuildDef builds.
-    """
+    """Assembles the forge base SquashFS image."""
     build_weight: ClassVar[int] = 2
-
 
 class SysrootAssembly(AssemblyDef):
     """Cross-compilation sysroot from buildtime packages."""
     pass
 
-
 class ToolchainAssembly(AssemblyDef):
-    """gcc/clang/binutils + sysroot composed into a coherent toolchain."""
+    """gcc/clang/binutils composed into a coherent toolchain."""
     build_weight: ClassVar[int] = 3
-
 
 class ContainerAssembly(AssemblyDef):
     """OCI/Docker image layer composition."""
     pass
 
-
 class StackAssembly(AssemblyDef):
-    """
-    Top-level product assembly — e.g. a full ROCm stack.
-    Pulls runtime artifacts from cache, composes final image, pushes to registry.
-    """
+    """Top-level product assembly."""
     build_weight: ClassVar[int] = 2
