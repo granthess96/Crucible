@@ -5,7 +5,8 @@ Source fetcher — manages a local bare clone cache and exports source trees
 into forge instance directories.
 
 Design:
-  - One bare clone per component in .kiln/git-cache/<name>.git
+  - One shallow bare clone per component in .kiln/git-cache/<name>.git
+  - Bare clones are shallow (--depth=1) and blobless (--filter=blob:none)
   - Bare clones persist across builds — fetch updates them, never re-clone from scratch
   - ref in build.py is resolved to a SHA once, written to kiln.lock
   - Subsequent fetches use the locked SHA — tags are not trusted to be immutable
@@ -217,7 +218,8 @@ class Fetcher:
                 # Use subprocess git directly — bare clones from gitpython
                 # may not have the default refspec set, causing fetch to fail
                 result = subprocess.run(
-                    ["git", "fetch", "--prune", "--tags", "origin"],
+                    ["git", "fetch", "--prune", "--tags",
+                     "--filter=blob:none", "--depth=1", "origin"],
                     cwd=bare_path,
                     capture_output=True,
                     text=True,
@@ -234,7 +236,8 @@ class Fetcher:
         log.info(f"{component_name}: cloning {url}")
         try:
             result = subprocess.run(
-                ["git", "clone", "--bare", "--filter=blob:none", url, str(bare_path)],
+                ["git", "clone", "--bare", "--filter=blob:none", "--depth=1",
+                 url, str(bare_path)],
                 capture_output=True,
                 text=True,
             )

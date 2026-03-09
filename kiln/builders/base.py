@@ -152,6 +152,25 @@ class BuildDef(KilnComponent):
     def install_command(self, paths: BuildPaths) -> list[str]:
         raise NotImplementedError(f"{self.__class__.__name__} must implement install_command()")
 
+    # --- Script overrides ---
+    # Return a bash script body instead of a command list.
+    # Written to __build__/kiln-<verb>.sh and executed inside forge.
+    # Takes precedence over the corresponding *_command() method.
+    # Use when a verb needs multi-step logic, env vars, or conditionals
+    # that don't fit cleanly in a single command list.
+
+    def configure_script(self, paths: BuildPaths) -> "str | None":
+        return None
+
+    def build_script(self, paths: BuildPaths) -> "str | None":
+        return None
+
+    def test_script(self, paths: BuildPaths) -> "str | None":
+        return None
+
+    def install_script(self, paths: BuildPaths) -> "str | None":
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Concrete BuildDef subclasses

@@ -609,6 +609,63 @@ def _forge_run(config, target: str, cmd: list[str],
         return False
 
 
+def _forge_run_script(config, target: str, script_body: str,
+                      verb: str, reporter: Reporter, status: Status,
+                      cwd: Path | None = None) -> bool:
+    """
+    Write script_body to __build__/kiln-<verb>.sh on the host,
+    then run it inside a ForgeInstance via bash.
+    The script file is left in place after the run for debugging.
+    """
+    from forge.instance import ForgeInstance
+
+    build_dir  = config.components_dir / target / "__build__"
+    script_path = build_dir / f"kiln-{verb}.sh"
+
+    # Prepend strict mode — catches silent failures in multi-step scripts
+    full_script = "#!/usr/bin/env bash\nset -euo pipefail\n\n" + script_body
+    script_path.write_text(full_script, encoding="utf-8")
+    script_path.chmod(0o755)
+
+    # Chroot-internal path to the script
+    from kiln.builders.base import BuildPaths
+    paths       = BuildPaths.for_component(target)
+    chroot_script = f"{paths.build}/kiln-{verb}.sh"
+
+    reporter.update(target, status)
+    effective_cwd = cwd or build_dir
+    try:
+        with ForgeInstance(config) as instance:
+            rc = instance.run(['bash', chroot_script], cwd=effective_cwd)
+        if rc != 0:
+            reporter.update(target, Status.ERROR)
+            print(
+                f"ERROR: {target}: script exited {rc}\n"
+                f"       Script left at: {script_path}",
+                file=sys.stderr,
+            )
+            return False
+        return True
+    except Exception as exc:
+        reporter.update(target, Status.ERROR)
+        print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
+        return False
+
+
+def _resolve_verb(instance, verb: str, paths):
+    """
+    Return (script_body_or_None, cmd_or_None) for a given verb.
+    Script takes precedence over command if both are defined.
+    """
+    script_method  = getattr(instance, f"{verb}_script",  None)
+    command_method = getattr(instance, f"{verb}_command", None)
+
+    script = script_method(paths)  if script_method  else None
+    cmd    = command_method(paths) if command_method else []
+
+    return script, cmd
+
+
 def verb_configure(target: str, config, reporter: Reporter) -> bool:
     """Run build system configure step inside forge."""
     from kiln.builders.base import BuildPaths
@@ -620,21 +677,23 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
     if instance is None:
         return False
 
-    paths = BuildPaths.for_component(target)
-    cmd   = instance.configure_command(paths)
+    paths          = BuildPaths.for_component(target)
+    script, cmd    = _resolve_verb(instance, "configure", paths)
+    build_dir      = config.components_dir / target / "__build__"
+    state_dir      = config.build_root / ".kiln" / "state" / target
 
-    if not cmd:
+    if script:
+        ok = _forge_run_script(config, target, script, "configure",
+                               reporter, Status.CONFIG, cwd=build_dir)
+    elif cmd:
+        ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, cwd=build_dir)
+    else:
         print(f"  {target}: no configure step — skipping")
-        # Write sentinel so build can proceed
-        state_dir = config.build_root / ".kiln" / "state" / target
         (state_dir / "configured").write_text("skipped\n")
         reporter.update(target, Status.OK)
         return True
 
-    build_dir = config.components_dir / target / "__build__"
-    ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, cwd=build_dir)
     if ok:
-        state_dir = config.build_root / ".kiln" / "state" / target
         (state_dir / "configured").write_text("ok\n")
         reporter.update(target, Status.OK)
     return ok
@@ -651,11 +710,15 @@ def verb_build(target: str, config, reporter: Reporter) -> bool:
     if instance is None:
         return False
 
-    paths = BuildPaths.for_component(target)
-    cmd   = instance.build_command(paths)
+    paths       = BuildPaths.for_component(target)
+    script, cmd = _resolve_verb(instance, "build", paths)
+    build_dir   = config.components_dir / target / "__build__"
 
-    build_dir = config.components_dir / target / "__build__"
-    ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir)
+    if script:
+        ok = _forge_run_script(config, target, script, "build",
+                               reporter, Status.BUILD, cwd=build_dir)
+    else:
+        ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -672,16 +735,19 @@ def verb_test(target: str, config, reporter: Reporter) -> bool:
     if instance is None:
         return False
 
-    paths = BuildPaths.for_component(target)
-    cmd   = instance.test_command(paths)
+    paths       = BuildPaths.for_component(target)
+    script, cmd = _resolve_verb(instance, "test", paths)
+    build_dir   = config.components_dir / target / "__build__"
 
-    if not cmd:
+    if script:
+        ok = _forge_run_script(config, target, script, "test",
+                               reporter, Status.TEST, cwd=build_dir)
+    elif cmd:
+        ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir)
+    else:
         print(f"  {target}: no test suite defined — skipping")
         reporter.update(target, Status.OK)
         return True
-
-    build_dir = config.components_dir / target / "__build__"
-    ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -698,11 +764,15 @@ def verb_install(target: str, config, reporter: Reporter) -> bool:
     if instance is None:
         return False
 
-    paths = BuildPaths.for_component(target)
-    cmd   = instance.install_command(paths)
+    paths       = BuildPaths.for_component(target)
+    script, cmd = _resolve_verb(instance, "install", paths)
+    build_dir   = config.components_dir / target / "__build__"
 
-    build_dir = config.components_dir / target / "__build__"
-    ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir)
+    if script:
+        ok = _forge_run_script(config, target, script, "install",
+                               reporter, Status.INSTALL, cwd=build_dir)
+    else:
+        ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir)
     if ok:
         reporter.update(target, Status.OK)
     return ok
