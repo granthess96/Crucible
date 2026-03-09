@@ -120,8 +120,6 @@ class BuildDef(KilnComponent):
         "usr/include/**",
         "usr/lib/*.a",
         "usr/lib64/*.a",
-        "usr/lib/*.so*",
-        "usr/lib64/*.so*",
         "usr/lib/pkgconfig/**",
         "usr/lib64/pkgconfig/**",
         "usr/lib/cmake/**",
@@ -179,11 +177,11 @@ class BuildDef(KilnComponent):
 class AutotoolsBuild(BuildDef):
     """./configure && make && make install"""
 
-    configure_script: ClassVar[str] = "configure"   # relative to __source__/
+    configure_exe: ClassVar[str] = "configure"   # relative to __source__/
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
-        fields["configure_script"] = self.configure_script
+        fields["configure_exe"] = self.configure_exe
         return fields
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
@@ -194,7 +192,7 @@ class AutotoolsBuild(BuildDef):
             f":{paths.sysroot}/usr/lib64/pkgconfig"
         )
         return [
-            f"{paths.source}/{self.configure_script}",
+            f"{paths.source}/{self.configure_exe}",
             f"--prefix={paths.install}",
             f"PKG_CONFIG_PATH={pkg_config_path}",
             f"CFLAGS={cflags}",
