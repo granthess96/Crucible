@@ -10,14 +10,14 @@ class LinuxHeaders(ScriptBuild):
         'ref': 'v6.12',
     }
 
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        return []
+
     def build_script(self, paths: BuildPaths) -> str:
         return f"""
 cd {paths.source}
 make headers_install ARCH=x86_64 INSTALL_HDR_PATH={paths.install}/usr
 """
 
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        return []   # no configure step
-
     def install_command(self, paths: BuildPaths) -> list[str]:
-        return []   # install happens in build_script
+        return []

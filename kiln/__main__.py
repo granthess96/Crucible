@@ -655,15 +655,18 @@ def _forge_run_script(config, target: str, script_body: str,
 def _resolve_verb(instance, verb: str, paths):
     """
     Return (script_body_or_None, cmd_or_None) for a given verb.
-    Script takes precedence over command if both are defined.
+    Script takes precedence — command_method is never called if script is set.
     """
-    script_method  = getattr(instance, f"{verb}_script",  None)
+    script_method = getattr(instance, f"{verb}_script", None)
+    script        = script_method(paths) if script_method else None
+
+    if script:
+        return script, []
+
     command_method = getattr(instance, f"{verb}_command", None)
+    cmd            = command_method(paths) if command_method else []
 
-    script = script_method(paths)  if script_method  else None
-    cmd    = command_method(paths) if command_method else []
-
-    return script, cmd
+    return None, cmd
 
 
 def verb_configure(target: str, config, reporter: Reporter) -> bool:
