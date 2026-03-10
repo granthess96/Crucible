@@ -22,15 +22,15 @@ Verbs (run in the order given, stop on first failure):
 Options:
     --verbose   single worker, stream build output to terminal
     --no-tty    plain line-per-completion output (auto if not a terminal)
-    --publish   push artifacts to global cache after package (CI only)
+    --push      push artifacts to Coffer remote cache after package
     --target    component name to build (default: inferred from cwd)
     --weight    override max_weight for this run
 
 Examples:
-    cd components/rocm-hip
+    cd components/zlib
     kiln deps
-    kiln deps fetch checkout configure build test install package
-    kiln deps --publish
+    kiln fetch checkout configure build test install package
+    kiln fetch checkout configure build test install package --push
     kiln fetch configure build --verbose
 """
 
@@ -50,7 +50,10 @@ from kiln.dag import (
     Resolver, ResolvedDAG, BuildSchedule, ResolveError,
     KilnLock, CacheBackend, RegistryBackend,
 )
-from kiln.cache import TieredCache, cache_from_config, CacheMiss, CacheError
+from kiln.cache import (
+    TieredCache, cache_from_config, CacheMiss, CacheError,
+    CofferUnavailable, Artifact,
+)
 from kiln.output import Reporter, Status, OutputMode, detect_output_mode
 
 
@@ -84,8 +87,8 @@ def make_parser() -> argparse.ArgumentParser:
         help="stream build output to terminal (implies single worker)")
     parser.add_argument("--no-tty", action="store_true", dest="no_tty",
         help="plain line-per-completion output")
-    parser.add_argument("--publish", action="store_true",
-        help="push artifacts to global cache (CI credentials required)")
+    parser.add_argument("--push", action="store_true",
+        help="push packaged artifact to Coffer remote cache (requires coffer_host in config)")
     parser.add_argument("--target", metavar="COMPONENT", default=None,
         help="component to build (default: inferred from cwd)")
     parser.add_argument("--weight", metavar="N", type=int, default=None,
@@ -134,28 +137,31 @@ class _CacheStatAdapter(CacheBackend):
     """
     Adapter used by the DAG resolver — checks cache existence by key only,
     without needing the component name. Uses Artifact.find() to scan by glob.
+
+    Checks local first, then Coffer if configured. A CofferUnavailable during
+    deps resolution is treated as a miss with a warning — deps is informational
+    and a network blip should not prevent the report from completing.
     """
     def __init__(self, tiered: TieredCache):
         self._t = tiered
 
     def stat(self, key: str) -> bool:
-        # The resolver only needs to know if an artifact exists.
-        # Use the local backend's _artifact_path directly and scan for any
-        # *.manifest.txt — avoids needing the component name at resolve time.
+        # Local check — scan for any *.manifest.txt in the shard directory
         local = self._t._local
         if hasattr(local, '_artifact_path'):
-            from kiln.cache import Artifact
             artifact = Artifact.find(local._artifact_path(key))
             if artifact is not None and artifact.is_complete():
                 return True
-        # Fallback: try global if present
-        if self._t._global is not None:
-            global_b = self._t._global
-            if hasattr(global_b, '_artifact_path'):
-                from kiln.cache import Artifact
-                artifact = Artifact.find(global_b._artifact_path(key))
-                if artifact is not None and artifact.is_complete():
-                    return True
+
+        # Coffer check — network call, failure is a warning not an error here
+        if self._t._coffer is not None:
+            try:
+                return self._t._coffer.stat(key, "")
+            except CofferUnavailable as exc:
+                print(f"  WARNING: Coffer unreachable during deps stat: {exc.reason}",
+                      file=sys.stderr)
+                return False
+
         return False
 
 
@@ -201,7 +207,7 @@ def _tag(status: Status) -> str:
 # ---------------------------------------------------------------------------
 
 def verb_deps(target: str, config, cache: TieredCache,
-              reporter: Reporter, publish: bool) -> bool:
+              reporter: Reporter, push: bool) -> bool:
     """Resolve DAG, stat cache/registry, report hits/misses."""
     lock     = KilnLock(config.lock_file)
     resolver = Resolver(
@@ -245,18 +251,10 @@ def verb_deps(target: str, config, cache: TieredCache,
 
     print(f"\n{hits} cached, {misses} missing.")
 
-    if not publish:
-        return len(dep_misses) == 0
-
-    # --publish: build each miss and push to global cache
-    print(f"\n--publish: building {misses} missing components...\n")
-    for node in result.ordered_misses:
-        reporter.update(node.name, Status.FETCH)
-        # TODO: invoke full build pipeline per node
-        print(f"  TODO: build + publish {node.name}")
-        reporter.update(node.name, Status.OK)
-
-    return True
+    # TODO: implement kiln deps --dry-run (current behavior becomes --dry-run)
+    #       kiln deps       → build and locally cache all missing deps
+    #       kiln deps --push → build missing deps + push to Coffer
+    return len(dep_misses) == 0
 
 
 def verb_fetch(target: str, config, reporter: Reporter) -> bool:
@@ -310,7 +308,6 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         return False
 
 
-
 def _populate_sysroot(
     target:      str,
     instance,
@@ -357,7 +354,7 @@ def _populate_sysroot(
         names = ", ".join(n.name for n in missing)
         print(
             f"ERROR: deps not in cache: {names}\n"
-            f"       Run \'kiln deps\' to check status, build missing deps first.",
+            f"       Run 'kiln deps' to check status, build missing deps first.",
             file=sys.stderr,
         )
         return False
@@ -369,6 +366,10 @@ def _populate_sysroot(
             tmp_path = Path(tmp)
             try:
                 cache.fetch(node.manifest_hash, node.name, tmp_path)
+            except CofferUnavailable as exc:
+                print(f"ERROR: Coffer unreachable while fetching dep {node.name}: {exc.reason}",
+                      file=sys.stderr)
+                return False
             except (CacheMiss, CacheError) as exc:
                 print(f"ERROR: failed to fetch dep {node.name}: {exc}", file=sys.stderr)
                 return False
@@ -433,7 +434,7 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
         return False
 
     if target not in reg:
-        print(f"ERROR: component \'{target}\' not found in components/", file=sys.stderr)
+        print(f"ERROR: component '{target}' not found in components/", file=sys.stderr)
         return False
 
     if not reg.is_build_def(target):
@@ -447,7 +448,7 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
     if not commit_file.exists():
         print(
             f"ERROR: {target} has not been fetched.\n"
-            f"       Run \'kiln fetch\' first.",
+            f"       Run 'kiln fetch' first.",
             file=sys.stderr,
         )
         return False
@@ -458,7 +459,7 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
     if not bare_path.exists():
         print(
             f"ERROR: bare clone missing for {target}.\n"
-            f"       Run \'kiln fetch\' first.",
+            f"       Run 'kiln fetch' first.",
             file=sys.stderr,
         )
         return False
@@ -552,7 +553,6 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
     return True
 
 
-
 def verb_clear_cache(config, cache: TieredCache) -> bool:
     """Remove all local cache entries."""
     size_before = cache.local_size_bytes()
@@ -622,7 +622,7 @@ def _forge_run_script(config, target: str, script_body: str,
     """
     from forge.instance import ForgeInstance
 
-    build_dir  = config.components_dir / target / "__build__"
+    build_dir   = config.components_dir / target / "__build__"
     script_path = build_dir / f"kiln-{verb}.sh"
 
     # Prepend strict mode — catches silent failures in multi-step scripts
@@ -632,7 +632,7 @@ def _forge_run_script(config, target: str, script_body: str,
 
     # Chroot-internal path to the script
     from kiln.builders.base import BuildPaths
-    paths       = BuildPaths.for_component(target)
+    paths         = BuildPaths.for_component(target)
     chroot_script = f"{paths.build}/kiln-{verb}.sh"
 
     reporter.update(target, status)
@@ -683,10 +683,10 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
     if instance is None:
         return False
 
-    paths          = BuildPaths.for_component(target)
-    script, cmd    = _resolve_verb(instance, "configure", paths)
-    build_dir      = config.components_dir / target / "__build__"
-    state_dir      = config.build_root / ".kiln" / "state" / target
+    paths       = BuildPaths.for_component(target)
+    script, cmd = _resolve_verb(instance, "configure", paths)
+    build_dir   = config.components_dir / target / "__build__"
+    state_dir   = config.build_root / ".kiln" / "state" / target
 
     if script:
         ok = _forge_run_script(config, target, script, "configure",
@@ -821,10 +821,11 @@ def verb_purge(target: str, config, reporter: Reporter) -> bool:
     return True
 
 
-def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) -> bool:
+def verb_package(target: str, config, cache: TieredCache,
+                 reporter: Reporter, push: bool) -> bool:
     """
     Split __install__/ into runtime and buildtime tarballs, write manifest,
-    store in local artifact cache.
+    store in local artifact cache. With --push, also upload to Coffer.
 
     runtime.tar.zst   — .so libs, binaries, etc (runtime_globs)
     buildtime.tar.zst — headers, .a libs, pkgconfig (buildtime_globs)
@@ -856,11 +857,19 @@ def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) ->
         )
         return False
 
+    # Validate --push preconditions early — fail before doing any work
+    if push and cache._coffer is None:
+        print(
+            f"ERROR: --push requires coffer_host to be set in [cache] config.\n"
+            f"       Add coffer_host = \"user@host\" to forge.toml or ~/.kiln/config.toml",
+            file=sys.stderr,
+        )
+        return False
+
     reporter.update(target, Status.PACKAGE)
 
     # --- Resolve manifest hash ---
     from kiln.dag import Resolver, ResolvedDAG, ResolveError
-    from kiln.cache import cache_from_config
 
     lock     = KilnLock(config.lock_file)
     resolver = Resolver(
@@ -937,7 +946,6 @@ def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) ->
                     stderr=subprocess.PIPE,
                 )
             else:
-                # Write file list for tar --files-from
                 filelist = tmp_path / "filelist.txt"
                 filelist.write_text(
                     "\n".join(str(f.relative_to(install_dir)) for f in files)
@@ -976,21 +984,36 @@ def verb_package(target: str, config, cache: TieredCache, reporter: Reporter) ->
             encoding="utf-8",
         )
 
-        # --- Store in cache ---
+        # --- Store locally first — always ---
         try:
             cache.store_local(manifest_hash, target, tmp_path)
         except Exception as exc:
-            print(f"ERROR: cache store failed: {exc}", file=sys.stderr)
+            print(f"ERROR: local cache store failed: {exc}", file=sys.stderr)
             reporter.update(target, Status.ERROR)
             return False
 
-    print(f"  {target}: cached as {manifest_hash[:16]}")
+        print(f"  {target}: cached locally as {manifest_hash[:16]}")
+
+        # --- Push to Coffer if requested ---
+        if push:
+            try:
+                cache.publish(manifest_hash, target, tmp_path)
+                print(f"  {target}: pushed to Coffer")
+            except CofferUnavailable as exc:
+                print(
+                    f"ERROR: Coffer unreachable — local cache written, push failed.\n"
+                    f"       {exc.reason}\n"
+                    f"       Re-run 'kiln package --push' when the server is available.",
+                    file=sys.stderr,
+                )
+                reporter.update(target, Status.ERROR)
+                return False
+            except CacheError as exc:
+                print(f"ERROR: Coffer push failed: {exc}", file=sys.stderr)
+                reporter.update(target, Status.ERROR)
+                return False
+
     reporter.update(target, Status.OK)
-    return True
-
-
-def verb_not_implemented(verb: str, target: str) -> bool:
-    print(f"  [{verb}] {target} — not yet implemented")
     return True
 
 
@@ -999,9 +1022,9 @@ def verb_not_implemented(verb: str, target: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def dispatch(verb: str, target: str, config, cache: TieredCache,
-             reporter: Reporter, publish: bool) -> bool:
+             reporter: Reporter, push: bool) -> bool:
     if verb == "deps":
-        return verb_deps(target, config, cache, reporter, publish)
+        return verb_deps(target, config, cache, reporter, push)
     elif verb == "fetch":
         return verb_fetch(target, config, reporter)
     elif verb == "checkout":
@@ -1021,7 +1044,7 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
     elif verb == "clear_cache":
         return verb_clear_cache(config, cache)
     elif verb == "package":
-        return verb_package(target, config, cache, reporter)
+        return verb_package(target, config, cache, reporter, push)
     else:
         print(f"ERROR: unknown verb '{verb}'", file=sys.stderr)
         return False
@@ -1035,16 +1058,20 @@ def main(argv: list[str] | None = None) -> int:
     # Re-exec inside user+mount namespace if not already root.
     # Required for ForgeInstance mount operations (overlayfs, squashfs).
     # Only needed for verbs that invoke forge — but simpler to always do it.
-    if os.geteuid() != 0:
+    
+    FORGE_VERBS = {"checkout", "configure", "build", "test", "install"}
+    
+    parser = make_parser()
+    args   = parser.parse_args(argv)
+
+    
+    if os.geteuid() != 0 and any(y in FORGE_VERBS for y in args.verbs):
         os.execvp("unshare", [
             "unshare", "--user", "--mount", "--map-root-user",
             "--", sys.executable, *sys.argv,
         ])
         print("ERROR: unshare failed", file=sys.stderr)
         return 1
-
-    parser = make_parser()
-    args   = parser.parse_args(argv)
 
     try:
         config = load_config()
@@ -1085,7 +1112,7 @@ def main(argv: list[str] | None = None) -> int:
                 config   = config,
                 cache    = cache,
                 reporter = reporter,
-                publish  = args.publish,
+                push     = args.push,
             )
         except KeyboardInterrupt:
             print("\nInterrupted.", file=sys.stderr)
