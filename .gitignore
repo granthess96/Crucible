@@ -35,3 +35,4 @@ components/**/__source__/
 components/**/__build__/
 components/**/__install__/
 components/**/__sysroot__/
+*.sqsh

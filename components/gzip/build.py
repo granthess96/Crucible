@@ -1,12 +1,12 @@
 from kiln.builders.base import AutotoolsBuild, BuildPaths
 
-class CoreUtils(AutotoolsBuild):
-    name    = 'coreutils'
-    version = '9.5'
-    deps    = ['gnulib', 'glibc', 'ncurses']
+class Gzip(AutotoolsBuild):
+    name    = 'gzip'
+    version = '1.12'
+    deps    = ['gnulib', 'glibc']
     source  = {
-        'git': 'https://git.savannah.gnu.org/git/coreutils.git',
-        'ref': 'v9.5',
+        'git': 'https://git.savannah.gnu.org/git/gzip.git',
+        'ref': 'v1.12',
     }
 
     def configure_script(self, paths: BuildPaths) -> str:

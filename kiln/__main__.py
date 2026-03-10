@@ -1078,14 +1078,25 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     for verb in args.verbs:
-        ok = dispatch(
-            verb     = verb,
-            target   = target,
-            config   = config,
-            cache    = cache,
-            reporter = reporter,
-            publish  = args.publish,
-        )
+        try:
+            ok = dispatch(
+                verb     = verb,
+                target   = target,
+                config   = config,
+                cache    = cache,
+                reporter = reporter,
+                publish  = args.publish,
+            )
+        except KeyboardInterrupt:
+            print("\nInterrupted.", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"\nERROR: {exc}", file=sys.stderr)
+            print(f"Failed at verb: {verb}", file=sys.stderr)
+            if os.environ.get("KILN_TRACEBACK"):
+                import traceback
+                traceback.print_exc()
+            return 1
         if not ok:
             print(f"\nFailed at verb: {verb}", file=sys.stderr)
             return 1
