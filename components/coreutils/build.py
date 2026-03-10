@@ -12,7 +12,7 @@ class CoreUtils(AutotoolsBuild):
     def configure_script(self, paths: BuildPaths) -> str:
         return f"""
 cd {paths.source}
-GNULIB_SRCDIR={paths.sysroot}/usr/share/gnulib ./bootstrap --no-git --skip-po
+GNULIB_SRCDIR={paths.sysroot}/usr/share/gnulib ./bootstrap --no-git --skip-po  --bootstrap-sync
 cd {paths.build}
-{paths.source}/configure --prefix=/usr
+FORCE_UNSAFE_CONFIGURE=1  {paths.source}/configure --prefix=/usr
 """

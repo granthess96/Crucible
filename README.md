@@ -1,4 +1,12 @@
-# Kiln
+# Crucible Tools
+## Crucible Coffer
+A ephemeral build artifact cache that is strongly deterministic and version addressable
+## Crucible Vault
+A long-term storage image/container registry (Design TBD)
+## Crucible Forge
+A secure execution environment for build operations - chroot like but no need for root access
+## Crucible Kiln
+A meta-build system
 
 
 ## Forge specific TODO:

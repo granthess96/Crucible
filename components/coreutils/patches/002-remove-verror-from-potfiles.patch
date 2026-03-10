@@ -1,0 +1,25 @@
+From 9e60f2db903b17c1a31e24b89bda90a12446459d Mon Sep 17 00:00:00 2001
+From: Paul Eggert <eggert@cs.ucla.edu>
+Date: Thu, 15 Aug 2024 15:12:25 -0700
+Subject: [PATCH] maint: adjust to recent removal of verror.c
+
+* po/POTFILES.in: Remove lib/verror.c
+---
+ po/POTFILES.in | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index d824499c5..a12436969 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -24,7 +24,6 @@ lib/siglist.h
+ lib/strsignal.c
+ lib/unicodeio.c
+ lib/userspec.c
+-lib/verror.c
+ lib/version-etc.c
+ lib/xalloc-die.c
+ lib/xbinary-io.c
+-- 
+2.43.0
+

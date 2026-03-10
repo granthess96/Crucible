@@ -36,3 +36,6 @@ components/**/__build__/
 components/**/__install__/
 components/**/__sysroot__/
 *.sqsh
+# For temporary testing
+images
+bob

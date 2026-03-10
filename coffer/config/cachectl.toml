@@ -1,0 +1,11 @@
+[storage]
+cache_root       = "/home/cache/cache"
+staging_root     = "/home/cache/staging"
+high_water_bytes = 50_000_000_000   # 50 GiB — trigger GC
+low_water_bytes  = 40_000_000_000   # 40 GiB — stop GC
+
+[staging]
+ttl_hours = 4   # staging buckets older than this are reaped
+
+[server]
+log_path = "/home/cache/logs/cachectl.log"

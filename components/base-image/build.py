@@ -30,6 +30,8 @@ class BaseImage(ScriptBuild):
 #        'gettext',
 #        'help2man',
 #        'texinfo',
+#        'patch',
+#        'diffutils',
     ]
     source  = {}   # no upstream source — pure assembly, Option C TODO
 

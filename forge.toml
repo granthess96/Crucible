@@ -2,8 +2,8 @@
 # Commit this file. Machine-local overrides go in ~/.kiln/config.toml
 
 [forge]
-base_image = ""    # registry URI for forge base squashfs image
-toolchain  = ""    # registry URI for toolchain image
+#base_image = ""    # registry URI for forge base squashfs image
+#toolchain  = ""    # registry URI for toolchain image
 
 [cache]
 local  = "~/.kiln/cache"

@@ -73,13 +73,15 @@ def create_base_image(config, verbose: bool):
         return 1
 
     base_sqsh.parent.mkdir(parents=True, exist_ok=True)
+    
+    print(f'Creation process requires sudo to run DNF and mksquashfs.\n You may be prompted for your password.')
 
-    with tempfile.TemporaryDirectory(prefix="forge-create-") as tmp:
+    with tempfile.TemporaryDirectory(dir=os.getcwd(), prefix="forge-create-") as tmp:
         rootfs = Path(tmp) / "rootfs"
         rootfs.mkdir()
 
         print(f"Populating rootfs via DNF ...")
-        cmd = [
+        cmd = ['sudo',
             'dnf', '--use-host-config',
             '--installroot', str(rootfs),
             '--releasever', '43',
@@ -116,9 +118,20 @@ def create_base_image(config, verbose: bool):
 # ---------------------------------------------------------------------------
 
 def main(argv=None) -> int:
-    # Re-exec inside a user+mount namespace if not already root.
-    # This gives us CAP_SYS_ADMIN for mounts without requiring sudo.
-    # The re-execed process sees itself as root (uid 0) inside the namespace.
+    parser = make_parser()
+    args   = parser.parse_args(argv)
+
+    # --create uses sudo dnf directly — no namespace needed
+    if args.create:
+        try:
+            config = load_config()
+        except ConfigError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        return create_base_image(config, args.verbose)
+
+    # All other operations run inside a user+mount namespace.
+    # Re-exec with unshare if not already root.
     if os.geteuid() != 0:
         os.execvp("unshare", [
             "unshare", "--user", "--mount", "--map-root-user",
@@ -128,17 +141,11 @@ def main(argv=None) -> int:
         print("Error: unshare failed", file=sys.stderr)
         return 1
 
-    parser = make_parser()
-    args   = parser.parse_args(argv)
-
     try:
         config = load_config()
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-
-    if args.create:
-        return create_base_image(config, args.verbose)
 
     # Strip leading '--' separator if present
     cmd = args.cmd

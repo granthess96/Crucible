@@ -1,0 +1,23 @@
+--- a/src/test.c	2026-03-10 13:45:05.431635464 -0500
++++ b/src/test.c	2026-03-10 13:44:55.085904283 -0500
+@@ -45,7 +45,7 @@
+ #include "strnumcmp.h"
+ 
+ #include <stdarg.h>
+-#include "verror.h"
++#include "error.h"
+ 
+ #if HAVE_SYS_PARAM_H
+ # include <sys/param.h>
+
+--- a/src/dd.c 2026-03-10 13:45:05.431635464 -0500
++++ b/src/dd.c 2026-03-10 13:44:55.085904283 -0500
+@@ -31,6 +31,6 @@
+ #include "ioblksize.h"
+ #include "long-options.h"
+ #include "quote.h"
+-#include "verror.h"
++#include "error.h"
+ #include "xstrtol.h"
+ #include "xtime.h"
+

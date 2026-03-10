@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""
+cachectl - Remote artifact cache controller for kiln build system.
+
+Layout on server:
+  /home/cache/
+    bin/cachectl
+    config/cachectl.toml
+    cache/<prefix>/<body>/<stem>.<type>.tar.zst + <stem>.manifest.txt
+    staging/<uuid>/
+"""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import logging
+import os
+import shutil
+import sys
+import time
+import tomllib
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_CONFIG_PATH = Path("/home/cache/config/cachectl.toml")
+
+@dataclass
+class Config:
+    cache_root: Path
+    staging_root: Path
+    high_water_bytes: int
+    low_water_bytes: int
+    staging_ttl_seconds: int
+    log_path: Path
+
+    @classmethod
+    def load(cls, path: Path = DEFAULT_CONFIG_PATH) -> "Config":
+        try:
+            with open(path, "rb") as f:
+                raw = tomllib.load(f)
+        except FileNotFoundError:
+            die(f"Config file not found: {path}")
+        except tomllib.TOMLDecodeError as e:
+            die(f"Config parse error: {e}")
+
+        try:
+            storage = raw["storage"]
+            staging_cfg = raw.get("staging", {})
+            server = raw.get("server", {})
+
+            return cls(
+                cache_root=Path(storage["cache_root"]),
+                staging_root=Path(storage["staging_root"]),
+                high_water_bytes=int(storage["high_water_bytes"]),
+                low_water_bytes=int(storage["low_water_bytes"]),
+                staging_ttl_seconds=int(staging_cfg.get("ttl_hours", 4)) * 3600,
+                log_path=Path(server.get("log_path", "/home/cache/logs/cachectl.log")),
+            )
+        except KeyError as e:
+            die(f"Missing required config key: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def setup_logging(log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[
+            logging.FileHandler(log_path),
+            logging.StreamHandler(sys.stderr),
+        ],
+    )
+
+log = logging.getLogger("cachectl")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def hash_to_path(cfg: Config, manifest_hash: str) -> Path:
+    """Return the cache directory for a given manifest hash."""
+    if len(manifest_hash) < 3:
+        die(f"Hash too short: {manifest_hash!r}")
+    prefix = manifest_hash[:2]
+    body = manifest_hash[2:]
+    return cfg.cache_root / prefix / body
+
+
+def dir_size(path: Path) -> int:
+    """Return total byte size of all files under path."""
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def touch_lru(bucket_dir: Path) -> None:
+    """Update mtime on all files in a bucket dir as LRU hint."""
+    now = time.time()
+    for p in bucket_dir.iterdir():
+        if p.is_file():
+            try:
+                os.utime(p, (now, now))
+            except OSError as e:
+                log.warning("touch_lru failed on %s: %s", p, e)
+
+
+def find_manifest(bucket_dir: Path) -> Path | None:
+    """Return the manifest file in a bucket dir, or None."""
+    for p in bucket_dir.iterdir():
+        if p.name.endswith(".manifest.txt"):
+            return p
+    return None
+
+
+def load_manifest(manifest_path: Path) -> dict:
+    try:
+        with open(manifest_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        die(f"Failed to read manifest {manifest_path}: {e}")
+
+
+def compute_file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# GC
+# ---------------------------------------------------------------------------
+
+def reap_stale_staging(cfg: Config) -> None:
+    """Remove staging buckets older than TTL."""
+    if not cfg.staging_root.exists():
+        return
+    cutoff = time.time() - cfg.staging_ttl_seconds
+    for entry in cfg.staging_root.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < cutoff:
+            log.info("gc: removing stale staging dir %s", entry)
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def run_gc(cfg: Config) -> None:
+    """Evict LRU cache entries until usage drops below low_water_bytes."""
+    reap_stale_staging(cfg)
+
+    if not cfg.cache_root.exists():
+        return
+
+    total = dir_size(cfg.cache_root)
+    if total <= cfg.high_water_bytes:
+        log.debug("gc: cache %d bytes, under high water %d — skipping", total, cfg.high_water_bytes)
+        return
+
+    log.info("gc: cache %d bytes exceeds high water %d — evicting", total, cfg.high_water_bytes)
+
+    # Collect all bucket dirs with their oldest file mtime (LRU proxy)
+    buckets: list[tuple[float, Path]] = []
+    for prefix_dir in cfg.cache_root.iterdir():
+        if not prefix_dir.is_dir():
+            continue
+        for body_dir in prefix_dir.iterdir():
+            if not body_dir.is_dir():
+                continue
+            mtimes = []
+            for f in body_dir.iterdir():
+                if f.is_file():
+                    try:
+                        mtimes.append(f.stat().st_mtime)
+                    except OSError:
+                        pass
+            if mtimes:
+                buckets.append((max(mtimes), body_dir))
+
+    # Sort oldest-first for LRU eviction
+    buckets.sort(key=lambda x: x[0])
+
+    for _mtime, bucket_dir in buckets:
+        if total <= cfg.low_water_bytes:
+            break
+        bucket_size = dir_size(bucket_dir)
+        log.info("gc: evicting %s (%d bytes, last accessed %.0f)", bucket_dir, bucket_size, _mtime)
+        shutil.rmtree(bucket_dir, ignore_errors=True)
+        # Remove empty prefix dir if applicable
+        try:
+            bucket_dir.parent.rmdir()
+        except OSError:
+            pass
+        total -= bucket_size
+
+    log.info("gc: cache now approximately %d bytes", total)
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_get_bucket(cfg: Config, _args: argparse.Namespace) -> None:
+    """Allocate a new empty staging bucket and print its path."""
+    cfg.staging_root.mkdir(parents=True, exist_ok=True)
+    bucket_id = str(uuid.uuid4())
+    bucket_path = cfg.staging_root / bucket_id
+    bucket_path.mkdir(mode=0o755)
+    print(bucket_path)
+    log.info("get-bucket: allocated %s", bucket_path)
+
+
+def cmd_publish(cfg: Config, args: argparse.Namespace) -> None:
+    """
+    Validate and atomically publish a staging bucket into the cache.
+
+    Usage: cachectl publish <bucket_path> <manifest_hash>
+    """
+    bucket_path = Path(args.bucket_path)
+    manifest_hash = args.manifest_hash
+
+    if not bucket_path.exists():
+        die(f"Staging bucket not found: {bucket_path}")
+
+    # Locate manifest
+    manifest_file = find_manifest(bucket_path)
+    if manifest_file is None:
+        die(f"No .manifest.txt found in staging bucket {bucket_path}")
+
+    manifest = load_manifest(manifest_file)
+
+    # Verify manifest hash matches expected
+    stored_hash = manifest.get("manifest_hash", "")
+    if stored_hash != manifest_hash:
+        die(
+            f"Manifest hash mismatch: expected {manifest_hash!r}, "
+            f"got {stored_hash!r}"
+        )
+
+    # Verify all artifact files listed in manifest exist and match sha256
+    outputs = manifest.get("outputs", {})
+    for output_type, output_info in outputs.items():
+        filename = output_info.get("file")
+        expected_sha = output_info.get("sha256")
+        if not filename:
+            continue
+        artifact_path = bucket_path / filename
+        if not artifact_path.exists():
+            die(f"Missing artifact {filename} for output type {output_type!r}")
+        if expected_sha:
+            actual_sha = compute_file_sha256(artifact_path)
+            if actual_sha != expected_sha:
+                die(
+                    f"SHA256 mismatch for {filename}: "
+                    f"expected {expected_sha}, got {actual_sha}"
+                )
+
+    # Determine destination
+    dest_dir = hash_to_path(cfg, manifest_hash)
+
+    if dest_dir.exists():
+        log.info("publish: %s already in cache — updating LRU", manifest_hash)
+        touch_lru(dest_dir)
+        shutil.rmtree(bucket_path, ignore_errors=True)
+        run_gc(cfg)
+        return
+
+    # Atomic publish: move staging bucket into place
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use a temp name under the prefix dir to make rename atomic
+    tmp_dest = dest_dir.parent / f".tmp-{uuid.uuid4()}"
+    try:
+        shutil.copytree(bucket_path, tmp_dest)
+        touch_lru(tmp_dest)
+        tmp_dest.rename(dest_dir)
+    except Exception as e:
+        shutil.rmtree(tmp_dest, ignore_errors=True)
+        die(f"Atomic publish failed: {e}")
+
+    shutil.rmtree(bucket_path, ignore_errors=True)
+    log.info("publish: %s published to %s", manifest_hash, dest_dir)
+
+    run_gc(cfg)
+
+
+def cmd_fetch(cfg: Config, args: argparse.Namespace) -> None:
+    """
+    Return the cache path for a hash if present (no state change — caller SCPs).
+    Also updates LRU.
+
+    Usage: cachectl fetch <manifest_hash>
+    """
+    manifest_hash = args.manifest_hash
+    bucket_dir = hash_to_path(cfg, manifest_hash)
+
+    if not bucket_dir.exists():
+        log.info("fetch: miss %s", manifest_hash)
+        sys.exit(2)  # 2 = cache miss (distinguishable from error)
+
+    touch_lru(bucket_dir)
+    print(bucket_dir)
+    log.info("fetch: hit %s -> %s", manifest_hash, bucket_dir)
+
+    run_gc(cfg)
+
+
+def cmd_test(cfg: Config, args: argparse.Namespace) -> None:
+    """
+    Test whether a hash exists in cache. Updates LRU on hit.
+    Exit 0 = hit, exit 2 = miss.
+
+    Usage: cachectl test <manifest_hash>
+    """
+    manifest_hash = args.manifest_hash
+    bucket_dir = hash_to_path(cfg, manifest_hash)
+
+    if not bucket_dir.exists():
+        log.info("test: miss %s", manifest_hash)
+        sys.exit(2)
+
+    touch_lru(bucket_dir)
+    print(bucket_dir)
+    log.info("test: hit %s", manifest_hash)
+
+    run_gc(cfg)
+
+
+def cmd_gc(cfg: Config, _args: argparse.Namespace) -> None:
+    """Run GC explicitly (for cron)."""
+    run_gc(cfg)
+    log.info("gc: complete")
+
+
+def cmd_status(cfg: Config, _args: argparse.Namespace) -> None:
+    """Print cache status summary."""
+    cache_bytes = dir_size(cfg.cache_root) if cfg.cache_root.exists() else 0
+    staging_bytes = dir_size(cfg.staging_root) if cfg.staging_root.exists() else 0
+
+    # Count buckets
+    bucket_count = 0
+    if cfg.cache_root.exists():
+        for prefix_dir in cfg.cache_root.iterdir():
+            if prefix_dir.is_dir():
+                for body_dir in prefix_dir.iterdir():
+                    if body_dir.is_dir():
+                        bucket_count += 1
+
+    staging_count = 0
+    if cfg.staging_root.exists():
+        staging_count = sum(1 for e in cfg.staging_root.iterdir() if e.is_dir())
+
+    def fmt(b: int) -> str:
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if b < 1024:
+                return f"{b:.1f} {unit}"
+            b //= 1024
+        return f"{b} TiB"
+
+    print(f"cache_root:      {cfg.cache_root}")
+    print(f"cache_size:      {fmt(cache_bytes)} ({cache_bytes} bytes)")
+    print(f"cache_entries:   {bucket_count}")
+    print(f"high_water:      {fmt(cfg.high_water_bytes)}")
+    print(f"low_water:       {fmt(cfg.low_water_bytes)}")
+    print(f"staging_root:    {cfg.staging_root}")
+    print(f"staging_size:    {fmt(staging_bytes)}")
+    print(f"staging_pending: {staging_count}")
+    print(f"staging_ttl:     {cfg.staging_ttl_seconds // 3600}h")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="cachectl",
+        description="Remote artifact cache controller for kiln build system.",
+    )
+    p.add_argument(
+        "--config", "-c",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        metavar="PATH",
+        help=f"Config file path (default: {DEFAULT_CONFIG_PATH})",
+    )
+
+    sub = p.add_subparsers(dest="command", required=True)
+
+    # get-bucket
+    sub.add_parser(
+        "get-bucket",
+        help="Allocate a new empty staging bucket; prints its path.",
+    )
+
+    # publish
+    pub = sub.add_parser(
+        "publish",
+        help="Validate and atomically publish a staging bucket into the cache.",
+    )
+    pub.add_argument("bucket_path", help="Path to staging bucket directory")
+    pub.add_argument("manifest_hash", help="Expected manifest hash")
+
+    # fetch
+    fetch = sub.add_parser(
+        "fetch",
+        help="Return cache path for hash (exit 2 = miss). Updates LRU.",
+    )
+    fetch.add_argument("manifest_hash", help="Manifest hash to look up")
+
+    # test
+    test = sub.add_parser(
+        "test",
+        help="Test if hash is cached (exit 0 = hit, exit 2 = miss). Updates LRU.",
+    )
+    test.add_argument("manifest_hash", help="Manifest hash to test")
+
+    # gc
+    sub.add_parser("gc", help="Run garbage collection (also runs on every operation).")
+
+    # status
+    sub.add_parser("status", help="Print cache status summary.")
+
+    return p
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    cfg = Config.load(args.config)
+    setup_logging(cfg.log_path)
+
+    commands = {
+        "get-bucket": cmd_get_bucket,
+        "publish":    cmd_publish,
+        "fetch":      cmd_fetch,
+        "test":       cmd_test,
+        "gc":         cmd_gc,
+        "status":     cmd_status,
+    }
+
+    commands[args.command](cfg, args)
+
+
+if __name__ == "__main__":
+    main()

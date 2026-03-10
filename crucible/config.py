@@ -99,14 +99,16 @@ class CrucibleConfig:
     @property
     def base_image_path(self) -> Path:
         """Resolved path to base squashfs image."""
-        return Path(self.forge.base_image).expanduser() if self.forge.base_image \
-               else Path("/opt/forge/base.sqsh")
+        if self.forge.base_image:
+            return Path(self.forge.base_image).expanduser()
+        return self.build_root / "images" / "base.sqsh"
 
     @property
     def toolchain_path(self) -> Path:
         """Resolved path to toolchain squashfs image."""
-        return Path(self.forge.toolchain).expanduser() if self.forge.toolchain \
-               else Path("/opt/forge/tools.sqsh")
+        if self.forge.toolchain:
+            return Path(self.forge.toolchain).expanduser()
+        return self.build_root / "images" / "tools.sqsh"
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +200,8 @@ FORGE_TOML_TEMPLATE = """\
 # Commit this file. Machine-local overrides go in ~/.kiln/config.toml
 
 [forge]
-base_image = "/opt/forge/base.sqsh"    # path or registry URI for base image
-toolchain  = "/opt/forge/tools.sqsh"   # path or registry URI for toolchain
+# base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
+# toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
 
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache
