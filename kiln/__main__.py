@@ -231,8 +231,11 @@ def verb_deps(target: str, config, cache: TieredCache,
         return True
 
     # BuildSchedule — some misses
-    hits   = len(result.dag.components) - len(result.ordered_misses)
-    misses = len(result.ordered_misses)
+    # The target itself is always a miss before it's built — only fail if
+    # its *dependencies* are missing (i.e. misses excluding the target).
+    dep_misses = [n for n in result.ordered_misses if n.name != target]
+    hits       = len(result.dag.components) - len(result.ordered_misses)
+    misses     = len(result.ordered_misses)
 
     print()
     for node in result.dag.components:
@@ -243,7 +246,7 @@ def verb_deps(target: str, config, cache: TieredCache,
     print(f"\n{hits} cached, {misses} missing.")
 
     if not publish:
-        return misses == 0
+        return len(dep_misses) == 0
 
     # --publish: build each miss and push to global cache
     print(f"\n--publish: building {misses} missing components...\n")

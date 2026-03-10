@@ -124,6 +124,8 @@ class BuildDef(KilnComponent):
         "usr/lib64/pkgconfig/**",
         "usr/lib/cmake/**",
         "usr/lib64/cmake/**",
+        "usr/lib/*.so",
+        "usr/lib64/*.so*",
     ]
 
     def manifest_fields(self) -> dict[str, object]:
@@ -186,14 +188,14 @@ class AutotoolsBuild(BuildDef):
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
         cflags  = f"-I{paths.sysroot}/usr/include {' '.join(self.comp_flags)}".strip()
-        ldflags = f"-L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
+        ldflags = f"-L{paths.sysroot}/usr/lib64 -L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
         pkg_config_path = (
             f"{paths.sysroot}/usr/lib/pkgconfig"
             f":{paths.sysroot}/usr/lib64/pkgconfig"
         )
         return [
             f"{paths.source}/{self.configure_exe}",
-            f"--prefix={paths.install}",
+            "--prefix=/usr",          # runtime prefix — files install to DESTDIR/usr/
             f"PKG_CONFIG_PATH={pkg_config_path}",
             f"CFLAGS={cflags}",
             f"LDFLAGS={ldflags}",
@@ -203,7 +205,9 @@ class AutotoolsBuild(BuildDef):
         return ['make', f'-j{os.cpu_count() or 4}']
 
     def install_command(self, paths: BuildPaths) -> list[str]:
-        return ['make', 'install']
+        # DESTDIR redirects the install into __install__/ without affecting
+        # the baked-in prefix — files land at __install__/usr/lib/ etc.
+        return ['make', f'DESTDIR={paths.install}', 'install']
 
 
 class CMakeBuild(BuildDef):
