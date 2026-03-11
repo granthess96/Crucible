@@ -1,18 +1,10 @@
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+# components/gzip/build.py
+from kiln.builders.base import AutotoolsBuild
 
 class Gzip(AutotoolsBuild):
     name    = 'gzip'
-    version = '1.12'
-    deps    = ['gnulib', 'glibc']
+    version = '1.13'
+    deps    = ['glibc']
     source  = {
-        'git': 'https://git.savannah.gnu.org/git/gzip.git',
-        'ref': 'v1.12',
+        'url': 'https://ftp.gnu.org/gnu/gzip/gzip-1.13.tar.xz',
     }
-
-    def configure_script(self, paths: BuildPaths) -> str:
-        return f"""
-cd {paths.source}
-GNULIB_SRCDIR={paths.sysroot}/usr/share/gnulib ./bootstrap --no-git --skip-po
-cd {paths.build}
-{paths.source}/configure --prefix=/usr
-"""

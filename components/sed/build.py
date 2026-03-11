@@ -1,17 +1,10 @@
+# components/sed/build.py
 from kiln.builders.base import AutotoolsBuild
 
 class Sed(AutotoolsBuild):
     name    = 'sed'
     version = '4.9'
-    deps    = ['gnulib', 'glibc']
+    deps    = ['glibc']
     source  = {
-        'git': 'https://git.savannah.gnu.org/git/sed.git',
-        'ref': 'v4.9',
+        'url': 'https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz',
     }
-
-    def configure_script(self, paths: BuildPaths) -> str:
-        return f"""
-cd {paths.source}
-GNULIB_SRCDIR={paths.sysroot}/usr/share/gnulib ./bootstrap --no-git --skip-po
-./configure --prefix=/usr
-"""

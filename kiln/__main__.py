@@ -39,6 +39,9 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+import subprocess
+import tempfile
+
 
 _here = Path(__file__).parent.parent
 if str(_here) not in sys.path:
@@ -258,18 +261,23 @@ def verb_deps(target: str, config, cache: TieredCache,
 
 
 def verb_fetch(target: str, config, reporter: Reporter) -> bool:
-    """Fetch source into bare clone cache and lock SHA."""
+    """
+    Fetch source into local cache and lock source identity.
+
+    git:     bare clone → .kiln/git-cache/<n>.git, locks commit SHA
+    tarball: download   → .kiln/tarball-cache/<n>/<file>, locks sha256
+
+    Writes source identity to .kiln/state/<n>/source_id on success.
+    """
     from kiln.registry import ComponentRegistry, RegistryError
-    from kiln.fetcher import Fetcher, FetchError
+    from kiln.fetcher import Fetcher, TarballFetcher, FetchError
+    from kiln.dag import KilnLock, _source_type
 
     try:
         reg = ComponentRegistry(config.components_dir)
     except RegistryError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return False
-
-    lock    = KilnLock(config.lock_file)
-    fetcher = Fetcher(config.git_cache_dir, lock)
 
     if target not in reg:
         print(f"ERROR: component '{target}' not found in components/", file=sys.stderr)
@@ -280,21 +288,43 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         return False
 
     instance = reg.instantiate(target)
-    if not getattr(instance, 'source', None):
-        print(f"ERROR: {target}.source is empty — add git url and ref to build.py",
+    source   = getattr(instance, 'source', None)
+    if not source:
+        print(f"ERROR: {target}.source is empty — add source spec to build.py",
               file=sys.stderr)
         return False
 
+    stype = _source_type(source)
+    if stype == "unknown":
+        print(
+            f"ERROR: {target}.source has no recognised key.\n"
+            f"       Use 'git' for git sources or 'url' for tarball sources.",
+            file=sys.stderr,
+        )
+        return False
+
+    lock      = KilnLock(config.lock_file)
+    state_dir = config.build_root / ".kiln" / "state" / target
+    state_dir.mkdir(parents=True, exist_ok=True)
+
     reporter.update(target, Status.FETCH)
+
     try:
-        sha = fetcher.fetch(target, instance.source)
+        if stype == "git":
+            fetcher    = Fetcher(config.git_cache_dir, lock)
+            source_id  = fetcher.fetch(target, source)
+            id_type    = "commit"
 
-        # Persist resolved SHA for use by configure/build/package verbs
-        state_dir = config.build_root / ".kiln" / "state" / target
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "source_commit").write_text(sha, encoding="utf-8")
+        else:  # tarball
+            fetcher    = TarballFetcher(config.tarball_cache_dir, lock)
+            source_id  = fetcher.fetch(target, source)
+            id_type    = "sha256"
 
-        print(f"  {target}: locked at {sha[:16]}")
+        # Write source identity sentinel — read back by verb_checkout
+        (state_dir / "source_id").write_text(source_id, encoding="utf-8")
+        (state_dir / "source_type").write_text(stype, encoding="utf-8")
+
+        print(f"  {target}: locked {id_type} {source_id[:16]}")
         reporter.update(target, Status.OK)
         return True
 
@@ -306,7 +336,6 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         reporter.update(target, Status.ERROR)
         print(f"ERROR: unexpected error fetching {target}: {exc}", file=sys.stderr)
         return False
-
 
 def _populate_sysroot(
     target:      str,
@@ -320,8 +349,6 @@ def _populate_sysroot(
     Re-runs the resolver to get manifest hashes — fast, correct, no state file needed.
     Returns True on success, False with error message printed on failure.
     """
-    import subprocess
-    import tempfile
 
     if not instance.deps:
         return True
@@ -407,13 +434,14 @@ def _populate_sysroot(
 
     return True
 
-
-def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -> bool:
+def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
     """
     Set up the complete build environment for a component:
-      1. Verify kiln fetch was run (source_commit sentinel exists)
+      1. Verify kiln fetch was run (source_id sentinel exists)
       2. Wipe __source__/, __sysroot__/, __build__/, __install__/ for clean slate
-      3. Export source tree from bare clone into __source__/
+      3. Export/extract source into __source__/
+         - git:     git archive from bare clone at locked SHA
+         - tarball: tar extract from cached tarball, strip leading directory
       4. Apply patches in lexicographic order
       5. Unpack dep buildtime artifacts into __sysroot__/
       6. Create empty __build__/ and __install__/
@@ -426,6 +454,8 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
     import shutil
     import subprocess
     from kiln.registry import ComponentRegistry, RegistryError
+    from kiln.fetcher import Fetcher, TarballFetcher, FetchError
+    from kiln.dag import KilnLock, _source_type
 
     try:
         reg = ComponentRegistry(config.components_dir)
@@ -444,8 +474,10 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
 
     # --- Verify fetch was run ---
     state_dir   = config.build_root / ".kiln" / "state" / target
-    commit_file = state_dir / "source_commit"
-    if not commit_file.exists():
+    id_file     = state_dir / "source_id"
+    type_file   = state_dir / "source_type"
+
+    if not id_file.exists():
         print(
             f"ERROR: {target} has not been fetched.\n"
             f"       Run 'kiln fetch' first.",
@@ -453,18 +485,11 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
         )
         return False
 
-    sha       = commit_file.read_text(encoding="utf-8").strip()
-    bare_path = config.git_cache_dir / f"{target}.git"
-
-    if not bare_path.exists():
-        print(
-            f"ERROR: bare clone missing for {target}.\n"
-            f"       Run 'kiln fetch' first.",
-            file=sys.stderr,
-        )
-        return False
+    source_id   = id_file.read_text(encoding="utf-8").strip()
+    source_type = type_file.read_text(encoding="utf-8").strip() if type_file.exists() else "git"
 
     instance      = reg.instantiate(target)
+    source        = getattr(instance, 'source', {})
     component_dir = config.components_dir / target
     source_dir    = component_dir / "__source__"
     sysroot_dir   = component_dir / "__sysroot__"
@@ -478,39 +503,80 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
     for d in (source_dir, sysroot_dir, build_dir, install_dir):
         if d.exists():
             shutil.rmtree(d)
-
-    # --- Export source tree at locked SHA ---
     source_dir.mkdir()
-    archive = subprocess.run(
-        ["git", "archive", "--format=tar", sha],
-        cwd    = bare_path,
-        stdout = subprocess.PIPE,
-        stderr = subprocess.PIPE,
-    )
-    if archive.returncode != 0:
-        print(
-            f"ERROR: git archive failed for {target} at {sha[:16]}:\n"
-            f"       {archive.stderr.decode().strip()}",
-            file=sys.stderr,
-        )
-        reporter.update(target, Status.ERROR)
-        return False
 
-    extract = subprocess.run(
-        ["tar", "x", "-C", str(source_dir)],
-        input  = archive.stdout,
-        stderr = subprocess.PIPE,
-    )
-    if extract.returncode != 0:
-        print(
-            f"ERROR: tar extract failed for {target}:\n"
-            f"       {extract.stderr.decode().strip()}",
-            file=sys.stderr,
-        )
-        reporter.update(target, Status.ERROR)
-        return False
+    # --- Export/extract source ---
+    if source_type == "git":
+        bare_path = config.git_cache_dir / f"{target}.git"
+        if not bare_path.exists():
+            print(
+                f"ERROR: bare clone missing for {target}.\n"
+                f"       Run 'kiln fetch' first.",
+                file=sys.stderr,
+            )
+            reporter.update(target, Status.ERROR)
+            return False
 
-    print(f"  {target}: checked out {sha[:16]}")
+        archive = subprocess.run(
+            ["git", "archive", "--format=tar", source_id],
+            cwd    = bare_path,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.PIPE,
+        )
+        if archive.returncode != 0:
+            print(
+                f"ERROR: git archive failed for {target} at {source_id[:16]}:\n"
+                f"       {archive.stderr.decode().strip()}",
+                file=sys.stderr,
+            )
+            reporter.update(target, Status.ERROR)
+            return False
+
+        extract = subprocess.run(
+            ["tar", "x", "-C", str(source_dir)],
+            input  = archive.stdout,
+            stderr = subprocess.PIPE,
+        )
+        if extract.returncode != 0:
+            print(
+                f"ERROR: tar extract failed for {target}:\n"
+                f"       {extract.stderr.decode().strip()}",
+                file=sys.stderr,
+            )
+            reporter.update(target, Status.ERROR)
+            return False
+
+    else:  # tarball
+        lock    = KilnLock(config.lock_file)
+        fetcher = TarballFetcher(config.tarball_cache_dir, lock)
+        tarball = fetcher.cached_path(target, source)
+
+        if tarball is None:
+            print(
+                f"ERROR: cached tarball missing or sha256 mismatch for {target}.\n"
+                f"       Run 'kiln fetch' to re-download.",
+                file=sys.stderr,
+            )
+            reporter.update(target, Status.ERROR)
+            return False
+
+        # Extract tarball, stripping the leading directory component
+        # Most tarballs contain a single top-level dir e.g. coreutils-9.5/
+        extract = subprocess.run(
+            ["tar", "x", "--strip-components=1", "-f", str(tarball),
+             "-C", str(source_dir)],
+            stderr = subprocess.PIPE,
+        )
+        if extract.returncode != 0:
+            print(
+                f"ERROR: tarball extract failed for {target}:\n"
+                f"       {extract.stderr.decode().strip()}",
+                file=sys.stderr,
+            )
+            reporter.update(target, Status.ERROR)
+            return False
+
+    print(f"  {target}: checked out {source_id[:16]}")
 
     # --- Apply patches ---
     if patches_dir.is_dir():
@@ -547,11 +613,10 @@ def verb_checkout(target: str, config, cache: TieredCache, reporter: Reporter) -
 
     # --- Write checked_out sentinel ---
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "checked_out").write_text(f"{sha}\n", encoding="utf-8")
+    (state_dir / "checked_out").write_text(f"{source_id}\n", encoding="utf-8")
 
     reporter.update(target, Status.OK)
     return True
-
 
 def verb_clear_cache(config, cache: TieredCache) -> bool:
     """Remove all local cache entries."""
@@ -589,23 +654,40 @@ def _check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bo
         return False
     return True
 
-
 def _forge_run(config, target: str, cmd: list[str],
                reporter: Reporter, status: Status,
                cwd: Path | None = None) -> bool:
-    """Run cmd inside a ForgeInstance. Returns True on success."""
-    from forge.instance import ForgeInstance
-
+    """
+    Run cmd inside a forge environment via the forge CLI subprocess.
+    forge handles its own unshare — kiln stays in user context throughout.
+    Returns True on success.
+    """
     reporter.update(target, status)
     effective_cwd = cwd or config.components_dir / target
+    
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(_here)   # _here is already defined at top of __main__.py
+
+    forge_cmd = [
+        sys.executable, '-m', 'forge',
+        '--cwd', str(effective_cwd),
+        '--',
+    ] + [str(c) for c in cmd]
+
+    if config.scheduler.max_weight == 1 or True:   # always show for now
+        pass   # reporter handles output
+
     try:
-        with ForgeInstance(config) as instance:
-            rc = instance.run(cmd, cwd=effective_cwd)
-        if rc != 0:
+        result = subprocess.run(forge_cmd, check=False, env=env)
+        if result.returncode != 0:
             reporter.update(target, Status.ERROR)
-            print(f"ERROR: {target}: command exited {rc}", file=sys.stderr)
+            print(f"ERROR: {target}: command exited {result.returncode}", file=sys.stderr)
             return False
         return True
+    except FileNotFoundError:
+        reporter.update(target, Status.ERROR)
+        print(f"ERROR: forge not found — is it installed?", file=sys.stderr)
+        return False
     except Exception as exc:
         reporter.update(target, Status.ERROR)
         print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
@@ -617,11 +699,10 @@ def _forge_run_script(config, target: str, script_body: str,
                       cwd: Path | None = None) -> bool:
     """
     Write script_body to __build__/kiln-<verb>.sh on the host,
-    then run it inside a ForgeInstance via bash.
+    then run it inside forge via the forge CLI subprocess.
     The script file is left in place after the run for debugging.
+    forge handles its own unshare — kiln stays in user context throughout.
     """
-    from forge.instance import ForgeInstance
-
     build_dir   = config.components_dir / target / "__build__"
     script_path = build_dir / f"kiln-{verb}.sh"
 
@@ -635,25 +716,38 @@ def _forge_run_script(config, target: str, script_body: str,
     paths         = BuildPaths.for_component(target)
     chroot_script = f"{paths.build}/kiln-{verb}.sh"
 
-    reporter.update(target, status)
     effective_cwd = cwd or build_dir
+    
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(_here)   # _here is already defined at top of __main__.py
+
+
+    forge_cmd = [
+        sys.executable, '-m', 'forge',
+        '--cwd', str(effective_cwd),
+        '--', 'bash', chroot_script,
+    ]
+
+    reporter.update(target, status)
     try:
-        with ForgeInstance(config) as instance:
-            rc = instance.run(['bash', chroot_script], cwd=effective_cwd)
-        if rc != 0:
+        result = subprocess.run(forge_cmd, check=False, env=env)
+        if result.returncode != 0:
             reporter.update(target, Status.ERROR)
             print(
-                f"ERROR: {target}: script exited {rc}\n"
+                f"ERROR: {target}: script exited {result.returncode}\n"
                 f"       Script left at: {script_path}",
                 file=sys.stderr,
             )
             return False
         return True
+    except FileNotFoundError:
+        reporter.update(target, Status.ERROR)
+        print(f"ERROR: forge not found — is it installed?", file=sys.stderr)
+        return False
     except Exception as exc:
         reporter.update(target, Status.ERROR)
         print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
         return False
-
 
 def _resolve_verb(instance, verb: str, paths):
     """
@@ -1059,19 +1153,8 @@ def main(argv: list[str] | None = None) -> int:
     # Required for ForgeInstance mount operations (overlayfs, squashfs).
     # Only needed for verbs that invoke forge — but simpler to always do it.
     
-    FORGE_VERBS = {"checkout", "configure", "build", "test", "install"}
-    
     parser = make_parser()
     args   = parser.parse_args(argv)
-
-    
-    if os.geteuid() != 0 and any(y in FORGE_VERBS for y in args.verbs):
-        os.execvp("unshare", [
-            "unshare", "--user", "--mount", "--map-root-user",
-            "--", sys.executable, *sys.argv,
-        ])
-        print("ERROR: unshare failed", file=sys.stderr)
-        return 1
 
     try:
         config = load_config()

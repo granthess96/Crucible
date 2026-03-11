@@ -1,6 +1,5 @@
 """
 kiln/manifest.py
-
 Canonical manifest generation and hashing.
 
 A manifest is a deterministic text representation of every input that could
@@ -16,7 +15,6 @@ Rules for canonical format (violating these breaks cache correctness):
   - Exactly one trailing newline
   - String values are stripped of leading/trailing whitespace
 """
-
 from __future__ import annotations
 
 import hashlib
@@ -47,7 +45,6 @@ def _serialise_value(value: Any) -> list[str]:
         items = [str(i).strip() for i in value if str(i).strip()]
         return items   # caller handles multi-line formatting
     if isinstance(value, dict):
-        # Dicts are flattened as key:subkey lines — not nested
         lines = []
         for k, v in sorted(value.items()):
             sub = _serialise_value(v)
@@ -64,7 +61,6 @@ def render_manifest(fields: dict[str, Any]) -> str:
     pass fields from manifest_fields() which guarantees order).
     """
     lines: list[str] = []
-
     for key, value in fields.items():
         serialised = _serialise_value(value)
         if not serialised:
@@ -77,7 +73,6 @@ def render_manifest(fields: dict[str, Any]) -> str:
             lines.append(f"{key}: {serialised[0]}")
         else:
             lines.append(f"{key}: {serialised[0]}")
-
     return "\n".join(lines) + "\n"
 
 
@@ -98,8 +93,10 @@ class Manifest:
     text:          str = field(init=False)
     hash:          str = field(init=False)
 
-    # These are filled in by the resolver after DAG traversal
-    source_commit: str | None = None    # resolved git SHA (from kiln.lock)
+    # Resolver-populated fields — exactly one of source_commit or source_sha256
+    # will be set for any given component, depending on source type.
+    source_commit: str | None = None    # git: resolved commit SHA from kiln.lock
+    source_sha256: str | None = None    # tarball: sha256 from kiln.lock
     builder_hash:  str | None = None    # SHA256 of the build.py file itself
     patches_hash:  str | None = None    # SHA256 of the patches/ dir tree (if any)
     forge_base:    str | None = None    # registry hash of forge base image
@@ -110,11 +107,14 @@ class Manifest:
 
     def _finalise(self):
         """Render text and compute hash from current field state."""
-        # Inject resolver-populated fields into the canonical fields dict
-        # These come after the component-declared fields, in fixed order.
-        resolved = dict(self.fields)   # copy, preserve original order
+        resolved = dict(self.fields)
+
+        # Source identity — only one will be set per component
         if self.source_commit:
             resolved["source_commit"] = self.source_commit
+        if self.source_sha256:
+            resolved["source_sha256"] = self.source_sha256
+
         if self.builder_hash:
             resolved["builder_hash"]  = self.builder_hash
         if self.patches_hash:
@@ -130,6 +130,7 @@ class Manifest:
     def with_resolved(
         self,
         source_commit: str | None = None,
+        source_sha256: str | None = None,
         builder_hash:  str | None = None,
         patches_hash:  str | None = None,
         forge_base:    str | None = None,
@@ -138,12 +139,14 @@ class Manifest:
         """
         Return a new Manifest with resolver-populated fields added.
         The hash changes when any of these are set — that is intentional.
+        Exactly one of source_commit / source_sha256 should be provided.
         """
         return Manifest(
             component     = self.component,
             version       = self.version,
             fields        = self.fields,
             source_commit = source_commit or self.source_commit,
+            source_sha256 = source_sha256 or self.source_sha256,
             builder_hash  = builder_hash  or self.builder_hash,
             patches_hash  = patches_hash  or self.patches_hash,
             forge_base    = forge_base    or self.forge_base,
@@ -180,7 +183,6 @@ def hash_directory_tree(path: Path) -> str:
     h = hashlib.sha256()
     for child in sorted(path.rglob("*")):
         if child.is_file():
-            # Include relative path so renames change the hash
             rel = child.relative_to(path)
             h.update(str(rel).encode("utf-8"))
             h.update(hash_file(child).encode("utf-8"))

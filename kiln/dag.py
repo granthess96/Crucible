@@ -138,14 +138,27 @@ class RegistryBackend:
 
 
 # ---------------------------------------------------------------------------
-# Lock file — stores resolved git SHAs
+# Lock file — stores resolved source identities
+#
+# Format (one entry per line):
+#   <component>.commit <sha>          git commit SHA (from tag/branch resolution)
+#   <component>.sha256 <hex>          tarball sha256 (established on first fetch)
+#   <component>.url    <url>          tarball URL (to detect url changes in build.py)
+#
+# The lock file is committed to the repo. It makes builds reproducible:
+#   - git: tag refs are resolved once and locked; re-resolving is skipped
+#   - tarball: sha256 is established on first fetch; subsequent fetches
+#     verify the downloaded bytes match — mismatch is a hard error
 # ---------------------------------------------------------------------------
 
 class KilnLock:
     """
     kiln.lock — committed to the meta-build repo.
-    Maps component name → resolved git commit SHA.
-    Prevents re-resolving git refs on every build.
+
+    Stores source identity for each component:
+      git components:     <name>.commit <sha>
+      tarball components: <name>.sha256 <hex>
+                          <name>.url    <url>
     """
 
     def __init__(self, lock_path: Path):
@@ -163,16 +176,53 @@ class KilnLock:
             if len(parts) == 2:
                 self._data[parts[0]] = parts[1]
 
+    def _get(self, key: str) -> str | None:
+        return self._data.get(key)
+
+    def _set(self, key: str, value: str) -> None:
+        self._data[key] = value
+
+    # --- Git ---
+
     def get_commit(self, component_name: str) -> str | None:
-        return self._data.get(component_name)
+        """Return locked git commit SHA, or None if not yet fetched."""
+        return self._get(f"{component_name}.commit")
 
     def set_commit(self, component_name: str, commit_sha: str) -> None:
-        self._data[component_name] = commit_sha
+        self._set(f"{component_name}.commit", commit_sha)
+
+    # --- Tarball ---
+
+    def get_sha256(self, component_name: str) -> str | None:
+        """Return locked tarball sha256, or None if not yet fetched."""
+        return self._get(f"{component_name}.sha256")
+
+    def set_sha256(self, component_name: str, sha256: str) -> None:
+        self._set(f"{component_name}.sha256", sha256)
+
+    def get_url(self, component_name: str) -> str | None:
+        """Return the URL that was used when the sha256 was locked."""
+        return self._get(f"{component_name}.url")
+
+    def set_url(self, component_name: str, url: str) -> None:
+        self._set(f"{component_name}.url", url)
+
+    # --- Source type detection ---
+
+    def source_type(self, component_name: str) -> Literal["git", "tarball", "unknown"]:
+        """Infer what kind of source is locked for this component."""
+        if self._get(f"{component_name}.commit") is not None:
+            return "git"
+        if self._get(f"{component_name}.sha256") is not None:
+            return "tarball"
+        return "unknown"
+
+    # --- Persistence ---
 
     def write(self) -> None:
         lines = ["# kiln.lock — auto-generated, commit this file\n"]
-        for name in sorted(self._data):
-            lines.append(f"{name} {self._data[name]}\n")
+        for key in sorted(self._data):
+            lines.append(f"{key} {self._data[key]}\n")
         self._path.write_text("".join(lines), encoding="utf-8")
 
 
@@ -269,7 +319,6 @@ class Resolver:
         topo_order is leaves-first (dependencies before dependents).
         Raises ResolveError on cycle or missing component.
         """
-        # Collect full dep map by BFS
         dep_map: dict[str, list[str]] = {}
         queue = [target]
         visited: set[str] = set()
@@ -316,7 +365,6 @@ class Resolver:
                     ready.append(dependent)
 
         if len(order) != len(dep_map):
-            # Cycle exists — find the involved components
             involved = [n for n in dep_map if n not in order]
             raise ResolveError(
                 kind="cycle",
@@ -332,34 +380,36 @@ class Resolver:
         instance = self._registry.instantiate(name)
         is_build = self._registry.is_build_def(name)
 
-        # Gather dep manifests — already resolved because topo order
         dep_nodes = [self._resolved[d] for d in dep_names]
 
-        # Build the manifest fields from the component class
         fields = instance.manifest_fields()
 
         # Add dep manifest hashes — deterministic order (sorted by dep name)
         for dep_name in sorted(dep_names):
             fields[f"dep:{dep_name}"] = self._resolved[dep_name].manifest_hash
 
-        # Construct initial manifest (without resolver-populated fields)
         manifest = Manifest(
             component=name,
             version=instance.version,
             fields=fields,
         )
 
-        # Populate resolver fields for BuildDef components
+        # Populate resolver fields for BuildDef components.
+        # Source identity goes in as either source_commit (git) or
+        # source_sha256 (tarball) — both serve the same role in the hash.
         if is_build:
+            source      = getattr(instance, "source", {})
+            source_type = _source_type(source)
+
             manifest = manifest.with_resolved(
-                source_commit = self._lock.get_commit(name),  # None if not yet fetched
+                source_commit = self._lock.get_commit(name) if source_type == "git" else None,
+                source_sha256 = self._lock.get_sha256(name) if source_type == "tarball" else None,
                 builder_hash  = hash_file(self._registry.build_py_path(name)),
                 patches_hash  = self._hash_patches(name),
                 forge_base    = self._forge_base,
                 toolchain     = self._toolchain,
             )
 
-        # Stat the appropriate backend
         output_store: Literal["cache", "registry"] = "cache" if is_build else "registry"
         cache_hit = self._stat(name, manifest.hash, output_store)
 
@@ -385,11 +435,6 @@ class Resolver:
         manifest_hash: str,
         output_store: Literal["cache", "registry"],
     ) -> bool:
-        """
-        Stat the appropriate backend.
-        Raises BackendUnavailableError if the backend cannot be reached.
-        Any stat failure is a hard error — not a silent miss.
-        """
         try:
             if output_store == "cache":
                 return self._cache.stat(manifest_hash)
@@ -400,3 +445,16 @@ class Resolver:
                 f"backend unavailable while checking '{name}' "
                 f"(store={output_store}): {exc}"
             ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Source type helper
+# ---------------------------------------------------------------------------
+
+def _source_type(source: dict) -> Literal["git", "tarball", "unknown"]:
+    """Classify a source dict from a build.py."""
+    if "git" in source:
+        return "git"
+    if "url" in source:
+        return "tarball"
+    return "unknown"

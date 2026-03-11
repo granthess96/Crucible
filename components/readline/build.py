@@ -1,3 +1,4 @@
+# components/readline/build.py
 from kiln.builders.base import AutotoolsBuild
 
 class Readline(AutotoolsBuild):
@@ -5,7 +6,5 @@ class Readline(AutotoolsBuild):
     version = '8.2'
     deps    = ['ncurses']
     source  = {
-        'git': 'https://git.savannah.gnu.org/git/readline.git',
-        'ref': 'readline-8.2'
-
+        'url': 'https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz',
     }

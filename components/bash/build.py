@@ -1,21 +1,17 @@
+# components/bash/build.py
 from kiln.builders.base import AutotoolsBuild
 
 class BashBuild(AutotoolsBuild):
-    name    = "bash"
-    version = "5.3"
-    deps    = ['glibc', 'ncurses']
+    name    = 'bash'
+    version = '5.2'
+    deps    = ['glibc', 'ncurses', 'readline']
     source  = {
-        "git": "https://git.savannah.gnu.org/git/bash.git",
-        "ref": "bash-5.3",
+        'url': 'https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz',
     }
-    
-    configure_args = ['--prefix=/usr', 
-                        '--without-bash-malloc',
-                        '--with-curses',
-                        '--enable-readline',
-                        '--disable-loadables',
-                        '--disable-examples'
-                      ]
-    
-    comp_flags = ['-O2', '-std=c++17', '-std=gnu17', '-I/usr/include']
-    link_flags = []
+    configure_args = [
+        '--without-bash-malloc',
+        '--with-curses',
+        '--enable-readline',
+        '--disable-loadables',
+        '--disable-examples',
+    ]

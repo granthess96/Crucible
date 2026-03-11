@@ -1,18 +1,10 @@
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+# components/xz/build.py
+from kiln.builders.base import AutotoolsBuild
 
 class Xz(AutotoolsBuild):
     name    = 'xz'
-    version = '5.2.5'
-    deps    = ['gnulib', 'glibc']
+    version = '5.6.3'
+    deps    = ['glibc']
     source  = {
-        'git': 'https://github.com/tukaani-project/xz.git',
-        'ref': 'v5.2.5',
+        'url': 'https://github.com/tukaani-project/xz/releases/download/v5.6.3/xz-5.6.3.tar.xz',
     }
-    
-    def configure_script(self, paths: BuildPaths) -> str:
-        return f"""
-cd {paths.source}
-GNULIB_SRCDIR={paths.sysroot}/usr/share/gnulib ./autogen.sh
-cd {paths.build}
-{paths.source}/configure --prefix=/usr
-"""    

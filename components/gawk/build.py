@@ -1,3 +1,4 @@
+# components/gawk/build.py
 from kiln.builders.base import AutotoolsBuild
 
 class Gawk(AutotoolsBuild):
@@ -5,6 +6,5 @@ class Gawk(AutotoolsBuild):
     version = '5.3.2'
     deps    = []
     source  = {
-        'git': 'https://git.savannah.gnu.org/git/gawk.git',
-        'ref': 'gawk-5.3.2',
+        'url': 'https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz',
     }

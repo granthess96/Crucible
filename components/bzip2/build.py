@@ -1,12 +1,10 @@
-from kiln.builders.base import MakeBuild, BuildPaths
+# components/bzip2/build.py
+from kiln.builders.base import MakeBuild
 
 class Bzip2(MakeBuild):
     name    = 'bzip2'
     version = '1.0.8'
     deps    = ['glibc']
     source  = {
-        'git': 'https://gitlab.com/bzip2/bzip2.git',
-        'ref': 'bzip2-1.0.8',
+        'url': 'https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz',
     }
-    
-    

@@ -107,6 +107,10 @@ class CrucibleConfig:
         if self.forge.toolchain:
             return Path(self.forge.toolchain).expanduser()
         return self.build_root / "images" / "tools.sqsh"
+    
+    @property
+    def tarball_cache_dir(self) -> Path:
+        return self.build_root / ".kiln" / "tarball-cache"
 
 # ---------------------------------------------------------------------------
 # Discovery
