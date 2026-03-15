@@ -224,12 +224,16 @@ class CMakeBuild(BuildDef):
         cmd = [
             'cmake', paths.source,
             f'-B{paths.build}',
-            f'-DCMAKE_PREFIX_PATH={paths.sysroot}',
-            f'-DCMAKE_INSTALL_PREFIX={paths.install}/usr',
+            f'-DCMAKE_PREFIX_PATH={paths.sysroot}/usr',
+            f'-DCMAKE_INSTALL_PREFIX=/usr',
+            f'-DCMAKE_STAGING_PREFIX={paths.install}/usr',
             f'-G{self.cmake_generator}',
             '-DCMAKE_C_COMPILER_WORKS=1',
             '-DCMAKE_CXX_COMPILER_WORKS=1',
+            f'-DCMAKE_LIBRARY_PATH={paths.sysroot}/usr/lib64;{paths.sysroot}/usr/lib',
+            f'-DCMAKE_INCLUDE_PATH={paths.sysroot}/usr/include',
         ]
+        
         if self.comp_flags:
             flags = ' '.join(self.comp_flags)
             cmd += [f'-DCMAKE_C_FLAGS={flags}', f'-DCMAKE_CXX_FLAGS={flags}']
@@ -246,7 +250,7 @@ class CMakeBuild(BuildDef):
 
 
 class MakeBuild(BuildDef):
-    """Plain Makefile — no configure step."""
+    """Plain Makefile — no configure step, build in source dir."""
 
     make_targets:    ClassVar[list[str]] = ['all']
     install_targets: ClassVar[list[str]] = ['install']
@@ -261,10 +265,18 @@ class MakeBuild(BuildDef):
         return []   # no configure step
 
     def build_command(self, paths: BuildPaths) -> list[str]:
-        return ['make', f'-j{os.cpu_count() or 4}'] + self.make_targets
+        return [
+            'make', f'-j{os.cpu_count() or 4}',
+            '-C', paths.source,
+        ] + self.make_targets
 
     def install_command(self, paths: BuildPaths) -> list[str]:
-        return ['make', f'PREFIX={paths.install}'] + self.install_targets
+        return [
+            'make',
+            '-C', paths.source,
+            f'PREFIX=/usr',
+            f'DESTDIR={paths.install}',
+        ] + self.install_targets
 
 
 class MesonBuild(BuildDef):
@@ -321,23 +333,76 @@ class AssemblyDef(KilnComponent):
                          output_dir: Path) -> None:
         raise NotImplementedError
 
+class ImageDef(AssemblyDef):
+    """
+    Assembles dep runtime artifacts into a squashfs image.
+    Subclasses declare deps and optionally override squashfs_args
+    or post_install() for image-specific fixups.
 
-class ChrootAssembly(AssemblyDef):
-    """Assembles the forge base SquashFS image."""
-    build_weight: ClassVar[int] = 2
+    Output: <output_dir>/image.sqsh
+    """
 
-class SysrootAssembly(AssemblyDef):
-    """Cross-compilation sysroot from buildtime packages."""
-    pass
+    # Override in subclass to pass extra flags to mksquashfs
+    squashfs_args: ClassVar[list[str]] = ['-comp', 'zstd', '-noappend']
 
-class ToolchainAssembly(AssemblyDef):
-    """gcc/clang/binutils composed into a coherent toolchain."""
-    build_weight: ClassVar[int] = 3
+    def manifest_fields(self) -> dict[str, object]:
+        fields = super().manifest_fields()
+        fields.update({
+            "kind":          "image",
+            "squashfs_args": self.squashfs_args,
+        })
+        return fields
 
-class ContainerAssembly(AssemblyDef):
-    """OCI/Docker image layer composition."""
-    pass
+    def post_install(self, rootfs: Path) -> None:
+        """
+        Override to perform image-specific fixups after all runtime
+        tarballs have been extracted but before mksquashfs runs.
+        Examples: create symlinks, write /etc files, add device nodes.
+        """
+        pass
 
-class StackAssembly(AssemblyDef):
-    """Top-level product assembly."""
-    build_weight: ClassVar[int] = 2
+    def assemble_command(self, artifact_inputs: dict[str, Path],
+                         output_dir: Path) -> None:
+        import subprocess
+
+        rootfs = output_dir / 'rootfs'
+        rootfs.mkdir(parents=True, exist_ok=True)
+
+        # Extract runtime tarballs in topo order
+        for name, artifact_dir in artifact_inputs.items():
+            runtime = artifact_dir / f'{name}.runtime.tar.zst'
+            if not runtime.exists():
+                raise RuntimeError(
+                    f'{name}: missing runtime tarball — '
+                    f'was it built with kiln package?'
+                )
+            result = subprocess.run(
+                ['tar', '--use-compress-program=zstd', '-xf', str(runtime),
+                 '-C', str(rootfs)],
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f'{name}: failed to extract runtime tarball')
+
+        # Image-specific fixups
+        self.post_install(rootfs)
+
+        # Pack into squashfs
+        sqsh = output_dir / 'image.sqsh'
+        result = subprocess.run(
+            ['mksquashfs', str(rootfs), str(sqsh)] + self.squashfs_args,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f'{self.name}: mksquashfs failed')
+
+
+class ContainerDef(AssemblyDef):
+    """
+    Assembles dep runtime artifacts into an OCI/podman container image.
+    TBD — subclass AssemblyDef when container support is needed.
+    """
+
+    def assemble_command(self, artifact_inputs: dict[str, Path],
+                         output_dir: Path) -> None:
+        raise NotImplementedError(
+            f'{self.name}: ContainerDef.assemble_command not yet implemented'
+        )

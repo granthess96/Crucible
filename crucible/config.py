@@ -19,6 +19,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from crucible.vault_client import is_vault_ref, resolve_image
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -31,6 +32,10 @@ class ConfigError(Exception):
 # Config dataclasses
 # ---------------------------------------------------------------------------
 
+@dataclass
+class VaultConfig:
+    url: str = "http://localhost:7777"  # default vault URL
+    
 @dataclass
 class ForgeConfig:
     base_image: str = ""       # path or registry URI for base squashfs
@@ -68,6 +73,7 @@ class CrucibleConfig:
     cache:      CacheConfig     = field(default_factory=CacheConfig)
     registry:   RegistryConfig  = field(default_factory=RegistryConfig)
     scheduler:  SchedulerConfig = field(default_factory=SchedulerConfig)
+    vault:      VaultConfig     = field(default_factory=VaultConfig)
 
     # --- Derived paths ---
     @property
@@ -98,6 +104,12 @@ class CrucibleConfig:
     def base_image_path(self) -> Path:
         """Resolved path to base squashfs image."""
         if self.forge.base_image:
+            if is_vault_ref(self.forge.base_image):
+                return resolve_image(
+                    self.vault.url,
+                    self.forge.base_image,
+                    self.local_cache_dir,
+                )
             return Path(self.forge.base_image).expanduser()
         return self.build_root / "images" / "base.sqsh"
 
@@ -105,6 +117,13 @@ class CrucibleConfig:
     def toolchain_path(self) -> Path:
         """Resolved path to toolchain squashfs image."""
         if self.forge.toolchain:
+            if is_vault_ref(self.forge.toolchain):
+                return resolve_image(
+                    self.vault.url,
+                    self.forge.toolchain,
+                    self.local_cache_dir,
+                )
+
             return Path(self.forge.toolchain).expanduser()
         return self.build_root / "images" / "tools.sqsh"
     
@@ -173,6 +192,10 @@ def _apply_toml(config: CrucibleConfig, path: Path) -> None:
         return
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
+    
+    if vault := data.get("vault"):
+        if v := vault.get("url"):
+            config.vault.url = v
 
     if forge := data.get("forge"):
         if v := forge.get("base_image"): config.forge.base_image = v
@@ -233,4 +256,8 @@ url = ""                     # container registry URL
 
 [scheduler]
 max_weight = 8               # adjust per machine in ~/.kiln/config.toml
+
+[vault]
+url = "http://localhost:7777"  # default vault URL
+
 """

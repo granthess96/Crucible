@@ -17,4 +17,6 @@ class NcursesBuild(AutotoolsBuild):
         '--enable-pc-files',
         '--with-pkg-config-libdir=/usr/lib/pkgconfig',
         '--disable-db-install',
+        '--with-bool=bool',
     ]
+    comp_flags = ['-O2', '-std=c++17', '-std=gnu17']

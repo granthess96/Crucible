@@ -1,0 +1,10 @@
+[server]
+host = "127.0.0.1"
+port = 7777
+
+[garage]
+endpoint   = "http://localhost:3900"
+access_key = "GK0893c4d093555bdad95ab421"
+secret_key = "9fef63d9e45a24f12ddaef254a4ee556c00583429830511c3d6fae04d141b32e"
+bucket     = "vault"
+region     = "garage"

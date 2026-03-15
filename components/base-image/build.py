@@ -18,6 +18,8 @@ class BaseImage(ScriptBuild):
         'pcre2',
         'tar',
         'xz',
+        'curl',
+        'libpng',
         'gzip',
         'bzip2',
         'make'

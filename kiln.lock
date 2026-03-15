@@ -1,8 +1,12 @@
 # kiln.lock — auto-generated, commit this file
+bash.sha256 0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba
+bash.url https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
 bzip2.sha256 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
 bzip2.url https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
 coreutils.sha256 16535a9adf0b10037364e2d612aad3d9f4eca3a344949ced74d12faf4bd51d25
 coreutils.url https://ftp.gnu.org/gnu/coreutils/coreutils-9.10.tar.xz
+curl.sha256 c7ca7db48b0909743eaef34250da02c19bc61d4f1dcedd6603f109409536ab56
+curl.url https://curl.se/download/curl-8.11.1.tar.xz
 findutils.sha256 1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f5
 findutils.url https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
@@ -12,6 +16,8 @@ grep.sha256 1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab
 grep.url https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz
 gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
 gzip.url https://ftp.gnu.org/gnu/gzip/gzip-1.13.tar.xz
+libpng.sha256 8c25a7792099a0089fa1cc76c94260d0bb3f1ec52b93671b572f8bb61577b732
+libpng.url https://download.sourceforge.net/libpng/libpng-1.6.44.tar.gz
 make.sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
 make.url https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
 ncurses.commit 79b9071f2be20a24c7be031655a5638f6032f29f
@@ -20,6 +26,8 @@ ncurses.url https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz
 openssl.sha256 002a2d6b30b58bf4bea46c43bdd96365aaf8daa6c428782aa4feee06da197df3
 openssl.url https://github.com/openssl/openssl/releases/download/openssl-3.4.1/openssl-3.4.1.tar.gz
 pcre2.commit f454e231fe5006dd7ff8f4693fd2b8eb94333429
+readline.sha256 3feb7171f16a84ee82ca18a36d7b9be109a52c04f492a053331d7d1095007c35
+readline.url https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz
 sed.sha256 6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181
 sed.url https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz
 tar.sha256 4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16

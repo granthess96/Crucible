@@ -4,6 +4,9 @@
 [forge]
 # base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
 # toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
+base_image = "vault:blake3:bcea4985f2cd2feb109fc277fa5e76b99b805cdf90e78cf8ddc0150d113a3bc0"
+toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
+
 
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache
@@ -20,3 +23,6 @@ url = ""                     # container registry URL
 
 [scheduler]
 max_weight = 8               # adjust per machine in ~/.kiln/config.toml
+
+[vault]
+url = "http://127.0.0.1:7777"

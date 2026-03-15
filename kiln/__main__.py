@@ -7,7 +7,7 @@ Usage (from any directory inside a build tree):
     kiln <verb> [verb ...] [options]
 
 Verbs (run in the order given, stop on first failure):
-    deps        resolve DAG, stat cache/registry, report hits/misses
+    deps        resolve DAG, stat cache/registry, build missing deps
     fetch       git fetch source into bare clone cache
     checkout    export source tree, apply patches, prepare build dirs
     configure   run build system configure step
@@ -15,6 +15,7 @@ Verbs (run in the order given, stop on first failure):
     test        run test suite
     install     DESTDIR install into empty directory
     package     split install tree -> runtime + buildtime tarballs, store in cache
+    assemble    assemble AssemblyDef component (ImageDef -> squashfs, etc.)
     clean       wipe build directory, leave source
     purge       wipe everything including source and build state
     clear_cache remove all local cache entries
@@ -32,6 +33,9 @@ Examples:
     kiln fetch checkout configure build test install package
     kiln fetch checkout configure build test install package --push
     kiln fetch configure build --verbose
+
+    cd components/base-image
+    kiln deps assemble
 """
 
 from __future__ import annotations
@@ -66,7 +70,7 @@ from kiln.output import Reporter, Status, OutputMode, detect_output_mode
 
 ALL_VERBS = [
     "deps", "fetch", "checkout", "configure", "build", "test",
-    "install", "package", "clean", "purge", "clear_cache",
+    "install", "package", "assemble", "clean", "purge", "clear_cache",
 ]
 
 
@@ -122,7 +126,7 @@ def infer_target(config, cwd: Path) -> str | None:
         try:
             rel = directory.relative_to(components)
         except ValueError:
-            break   # walked above components/ — stop searching
+            break   # walked above components/ -- stop searching
 
         if rel.parts:
             component_dir = components / rel.parts[0]
@@ -138,25 +142,25 @@ def infer_target(config, cwd: Path) -> str | None:
 
 class _CacheStatAdapter(CacheBackend):
     """
-    Adapter used by the DAG resolver — checks cache existence by key only,
+    Adapter used by the DAG resolver -- checks cache existence by key only,
     without needing the component name. Uses Artifact.find() to scan by glob.
 
     Checks local first, then Coffer if configured. A CofferUnavailable during
-    deps resolution is treated as a miss with a warning — deps is informational
+    deps resolution is treated as a miss with a warning -- deps is informational
     and a network blip should not prevent the report from completing.
     """
     def __init__(self, tiered: TieredCache):
         self._t = tiered
 
     def stat(self, key: str) -> bool:
-        # Local check — scan for any *.manifest.txt in the shard directory
+        # Local check -- scan for any *.manifest.txt in the shard directory
         local = self._t._local
         if hasattr(local, '_artifact_path'):
             artifact = Artifact.find(local._artifact_path(key))
             if artifact is not None and artifact.is_complete():
                 return True
 
-        # Coffer check — network call, failure is a warning not an error here
+        # Coffer check -- network call, failure is a warning not an error here
         if self._t._coffer is not None:
             try:
                 return self._t._coffer.stat(key, "")
@@ -211,7 +215,13 @@ def _tag(status: Status) -> str:
 
 def verb_deps(target: str, config, cache: TieredCache,
               reporter: Reporter, push: bool) -> bool:
-    """Resolve DAG, stat cache/registry, report hits/misses."""
+    """
+    Resolve DAG, stat cache/registry, report hits/misses.
+    If any deps are missing, build them in topo order before returning.
+    The target itself is excluded -- only its dependencies are built here.
+
+    --push  push each built dep to Coffer after packaging
+    """
     lock     = KilnLock(config.lock_file)
     resolver = Resolver(
         components_root = config.components_dir,
@@ -222,7 +232,6 @@ def verb_deps(target: str, config, cache: TieredCache,
         toolchain_hash  = config.forge.toolchain  or "sha256:unconfigured",
         max_weight      = config.scheduler.max_weight,
     )
-
     result = resolver.resolve(target)
 
     if isinstance(result, ResolveError):
@@ -239,33 +248,56 @@ def verb_deps(target: str, config, cache: TieredCache,
         print(f"\nAll {len(result.components)} dependencies satisfied.")
         return True
 
-    # BuildSchedule — some misses
-    # The target itself is always a miss before it's built — only fail if
-    # its *dependencies* are missing (i.e. misses excluding the target).
+    # BuildSchedule -- some misses
     dep_misses = [n for n in result.ordered_misses if n.name != target]
     hits       = len(result.dag.components) - len(result.ordered_misses)
-    misses     = len(result.ordered_misses)
 
     print()
     for node in result.dag.components:
         status = Status.CACHED if node.cache_hit else Status.PENDING
         print(f"  {_tag(status)}  {node.name:<24}  {node.version:<12}  "
               f"weight:{node.build_weight}  {node.manifest_hash[:16]}")
+    print(f"\n{hits} cached, {len(dep_misses)} dep(s) to build.")
 
-    print(f"\n{hits} cached, {misses} missing.")
+    if not dep_misses:
+        # Only the target itself is missing -- deps are satisfied
+        return True
 
-    # TODO: implement kiln deps --dry-run (current behavior becomes --dry-run)
-    #       kiln deps       → build and locally cache all missing deps
-    #       kiln deps --push → build missing deps + push to Coffer
-    return len(dep_misses) == 0
+    # --- Build each missing dep in topo order ---
+    BUILD_VERBS = [
+        ("fetch",     lambda t, cfg, c, r: verb_fetch(t, cfg, r)),
+        ("checkout",  lambda t, cfg, c, r: verb_checkout(t, cfg, c, r)),
+        ("configure", lambda t, cfg, c, r: verb_configure(t, cfg, r)),
+        ("build",     lambda t, cfg, c, r: verb_build(t, cfg, r)),
+        ("test",      lambda t, cfg, c, r: verb_test(t, cfg, r)),
+        ("install",   lambda t, cfg, c, r: verb_install(t, cfg, r)),
+        ("package",   lambda t, cfg, c, r: verb_package(t, cfg, c, r, push)),
+    ]
+
+    for node in dep_misses:
+        dep = node.name
+        print(f"\n--- building dep: {dep} ---")
+        for verb_name, caller in BUILD_VERBS:
+            ok = caller(dep, config, cache, reporter)
+            if not ok:
+                print(
+                    f"\nERROR: dep '{dep}' failed at verb '{verb_name}'.\n"
+                    f"       Fix the error above, then re-run 'kiln deps'.",
+                    file=sys.stderr,
+                )
+                return False
+        print(f"--- dep done:     {dep} ---")
+
+    print(f"\nAll {len(dep_misses)} missing dep(s) built successfully.")
+    return True
 
 
 def verb_fetch(target: str, config, reporter: Reporter) -> bool:
     """
     Fetch source into local cache and lock source identity.
 
-    git:     bare clone → .kiln/git-cache/<n>.git, locks commit SHA
-    tarball: download   → .kiln/tarball-cache/<n>/<file>, locks sha256
+    git:     bare clone -> .kiln/git-cache/<n>.git, locks commit SHA
+    tarball: download   -> .kiln/tarball-cache/<n>/<file>, locks sha256
 
     Writes source identity to .kiln/state/<n>/source_id on success.
     """
@@ -284,13 +316,13 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         return False
 
     if not reg.is_build_def(target):
-        print(f"ERROR: {target} is an AssemblyDef — no source to fetch", file=sys.stderr)
+        print(f"ERROR: '{target}' is an AssemblyDef -- no source to fetch", file=sys.stderr)
         return False
 
     instance = reg.instantiate(target)
     source   = getattr(instance, 'source', None)
     if not source:
-        print(f"ERROR: {target}.source is empty — add source spec to build.py",
+        print(f"ERROR: {target}.source is empty -- add source spec to build.py",
               file=sys.stderr)
         return False
 
@@ -311,16 +343,15 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
 
     try:
         if stype == "git":
-            fetcher    = Fetcher(config.git_cache_dir, lock)
-            source_id  = fetcher.fetch(target, source)
-            id_type    = "commit"
-
+            fetcher   = Fetcher(config.git_cache_dir, lock)
+            source_id = fetcher.fetch(target, source)
+            id_type   = "commit"
         else:  # tarball
-            fetcher    = TarballFetcher(config.tarball_cache_dir, lock)
-            source_id  = fetcher.fetch(target, source)
-            id_type    = "sha256"
+            fetcher   = TarballFetcher(config.tarball_cache_dir, lock)
+            source_id = fetcher.fetch(target, source)
+            id_type   = "sha256"
 
-        # Write source identity sentinel — read back by verb_checkout
+        # Write source identity sentinel -- read back by verb_checkout
         (state_dir / "source_id").write_text(source_id, encoding="utf-8")
         (state_dir / "source_type").write_text(stype, encoding="utf-8")
 
@@ -337,6 +368,7 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         print(f"ERROR: unexpected error fetching {target}: {exc}", file=sys.stderr)
         return False
 
+
 def _populate_sysroot(
     target:      str,
     instance,
@@ -346,10 +378,9 @@ def _populate_sysroot(
 ) -> bool:
     """
     Unpack buildtime artifacts for all deps into sysroot_dir.
-    Re-runs the resolver to get manifest hashes — fast, correct, no state file needed.
+    Re-runs the resolver to get manifest hashes -- fast, correct, no state file needed.
     Returns True on success, False with error message printed on failure.
     """
-
     if not instance.deps:
         return True
 
@@ -375,7 +406,7 @@ def _populate_sysroot(
     if not dep_nodes:
         return True
 
-    # Fail fast — all deps must be cached before we start unpacking
+    # Fail fast -- all deps must be cached before we start unpacking
     missing = [n for n in dep_nodes if not n.cache_hit]
     if missing:
         names = ", ".join(n.name for n in missing)
@@ -434,6 +465,7 @@ def _populate_sysroot(
 
     return True
 
+
 def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
     """
     Set up the complete build environment for a component:
@@ -447,12 +479,11 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
       6. Create empty __build__/ and __install__/
       7. Write checked_out sentinel
 
-    Destructive — always starts from a clean slate. No prompts.
+    Destructive -- always starts from a clean slate. No prompts.
     Precondition: kiln fetch must have run.
     All deps must be present in the artifact cache.
     """
     import shutil
-    import subprocess
     from kiln.registry import ComponentRegistry, RegistryError
     from kiln.fetcher import Fetcher, TarballFetcher, FetchError
     from kiln.dag import KilnLock, _source_type
@@ -468,14 +499,14 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
         return False
 
     if not reg.is_build_def(target):
-        print(f"ERROR: {target} is an AssemblyDef — no source to check out",
+        print(f"ERROR: '{target}' is an AssemblyDef -- no source to check out",
               file=sys.stderr)
         return False
 
     # --- Verify fetch was run ---
-    state_dir   = config.build_root / ".kiln" / "state" / target
-    id_file     = state_dir / "source_id"
-    type_file   = state_dir / "source_type"
+    state_dir = config.build_root / ".kiln" / "state" / target
+    id_file   = state_dir / "source_id"
+    type_file = state_dir / "source_type"
 
     if not id_file.exists():
         print(
@@ -499,7 +530,7 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
 
     reporter.update(target, Status.FETCH)
 
-    # --- Wipe all managed directories — clean slate ---
+    # --- Wipe all managed directories -- clean slate ---
     for d in (source_dir, sysroot_dir, build_dir, install_dir):
         if d.exists():
             shutil.rmtree(d)
@@ -560,8 +591,6 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
             reporter.update(target, Status.ERROR)
             return False
 
-        # Extract tarball, stripping the leading directory component
-        # Most tarballs contain a single top-level dir e.g. coreutils-9.5/
         extract = subprocess.run(
             ["tar", "x", "--strip-components=1", "-f", str(tarball),
              "-C", str(source_dir)],
@@ -618,6 +647,7 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
     reporter.update(target, Status.OK)
     return True
 
+
 def verb_clear_cache(config, cache: TieredCache) -> bool:
     """Remove all local cache entries."""
     size_before = cache.local_size_bytes()
@@ -654,28 +684,26 @@ def _check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bo
         return False
     return True
 
+
 def _forge_run(config, target: str, cmd: list[str],
                reporter: Reporter, status: Status,
                cwd: Path | None = None) -> bool:
     """
     Run cmd inside a forge environment via the forge CLI subprocess.
-    forge handles its own unshare — kiln stays in user context throughout.
+    forge handles its own unshare -- kiln stays in user context throughout.
     Returns True on success.
     """
     reporter.update(target, status)
     effective_cwd = cwd or config.components_dir / target
-    
+
     env = os.environ.copy()
-    env['PYTHONPATH'] = str(_here)   # _here is already defined at top of __main__.py
+    env['PYTHONPATH'] = str(_here)
 
     forge_cmd = [
         sys.executable, '-m', 'forge',
         '--cwd', str(effective_cwd),
         '--',
     ] + [str(c) for c in cmd]
-
-    if config.scheduler.max_weight == 1 or True:   # always show for now
-        pass   # reporter handles output
 
     try:
         result = subprocess.run(forge_cmd, check=False, env=env)
@@ -686,7 +714,7 @@ def _forge_run(config, target: str, cmd: list[str],
         return True
     except FileNotFoundError:
         reporter.update(target, Status.ERROR)
-        print(f"ERROR: forge not found — is it installed?", file=sys.stderr)
+        print(f"ERROR: forge not found -- is it installed?", file=sys.stderr)
         return False
     except Exception as exc:
         reporter.update(target, Status.ERROR)
@@ -701,12 +729,12 @@ def _forge_run_script(config, target: str, script_body: str,
     Write script_body to __build__/kiln-<verb>.sh on the host,
     then run it inside forge via the forge CLI subprocess.
     The script file is left in place after the run for debugging.
-    forge handles its own unshare — kiln stays in user context throughout.
+    forge handles its own unshare -- kiln stays in user context throughout.
     """
     build_dir   = config.components_dir / target / "__build__"
     script_path = build_dir / f"kiln-{verb}.sh"
 
-    # Prepend strict mode — catches silent failures in multi-step scripts
+    # Prepend strict mode -- catches silent failures in multi-step scripts
     full_script = "#!/usr/bin/env bash\nset -euo pipefail\n\n" + script_body
     script_path.write_text(full_script, encoding="utf-8")
     script_path.chmod(0o755)
@@ -717,10 +745,9 @@ def _forge_run_script(config, target: str, script_body: str,
     chroot_script = f"{paths.build}/kiln-{verb}.sh"
 
     effective_cwd = cwd or build_dir
-    
-    env = os.environ.copy()
-    env['PYTHONPATH'] = str(_here)   # _here is already defined at top of __main__.py
 
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(_here)
 
     forge_cmd = [
         sys.executable, '-m', 'forge',
@@ -742,17 +769,18 @@ def _forge_run_script(config, target: str, script_body: str,
         return True
     except FileNotFoundError:
         reporter.update(target, Status.ERROR)
-        print(f"ERROR: forge not found — is it installed?", file=sys.stderr)
+        print(f"ERROR: forge not found -- is it installed?", file=sys.stderr)
         return False
     except Exception as exc:
         reporter.update(target, Status.ERROR)
         print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
         return False
 
+
 def _resolve_verb(instance, verb: str, paths):
     """
     Return (script_body_or_None, cmd_or_None) for a given verb.
-    Script takes precedence — command_method is never called if script is set.
+    Script takes precedence -- command_method is never called if script is set.
     """
     script_method = getattr(instance, f"{verb}_script", None)
     script        = script_method(paths) if script_method else None
@@ -788,7 +816,7 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
     elif cmd:
         ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, cwd=build_dir)
     else:
-        print(f"  {target}: no configure step — skipping")
+        print(f"  {target}: no configure step -- skipping")
         (state_dir / "configured").write_text("skipped\n")
         reporter.update(target, Status.OK)
         return True
@@ -845,7 +873,7 @@ def verb_test(target: str, config, reporter: Reporter) -> bool:
     elif cmd:
         ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir)
     else:
-        print(f"  {target}: no test suite defined — skipping")
+        print(f"  {target}: no test suite defined -- skipping")
         reporter.update(target, Status.OK)
         return True
     if ok:
@@ -879,7 +907,7 @@ def verb_install(target: str, config, reporter: Reporter) -> bool:
 
 
 def verb_clean(target: str, config, reporter: Reporter) -> bool:
-    """Wipe __build__/ and __install__/ — keep source and sysroot."""
+    """Wipe __build__/ and __install__/ -- keep source and sysroot."""
     import shutil
     component_dir = config.components_dir / target
     for d in ("__build__", "__install__"):
@@ -897,7 +925,7 @@ def verb_clean(target: str, config, reporter: Reporter) -> bool:
 
 
 def verb_purge(target: str, config, reporter: Reporter) -> bool:
-    """Wipe everything — source, sysroot, build, install."""
+    """Wipe everything -- source, sysroot, build, install."""
     import shutil
     component_dir = config.components_dir / target
     for d in ("__source__", "__sysroot__", "__build__", "__install__"):
@@ -920,24 +948,29 @@ def verb_package(target: str, config, cache: TieredCache,
     """
     Split __install__/ into runtime and buildtime tarballs, write manifest,
     store in local artifact cache. With --push, also upload to Coffer.
+    BuildDef components only -- use 'kiln assemble' for AssemblyDef.
 
-    runtime.tar.zst   — .so libs, binaries, etc (runtime_globs)
-    buildtime.tar.zst — headers, .a libs, pkgconfig (buildtime_globs)
-    manifest.txt      — full canonical manifest fields
-
-    Files are named <component>.{runtime,buildtime}.tar.zst and
-    <component>.manifest.txt for human-readable cache inspection.
+    runtime.tar.zst   -- .so libs, binaries, etc (runtime_globs)
+    buildtime.tar.zst -- headers, .a libs, pkgconfig (buildtime_globs)
+    manifest.txt      -- full canonical manifest fields
     """
     import fnmatch
     import json
-    import subprocess
-    import tempfile
 
     if not _check_sentinel(config, target, "configured", "configure"):
         return False
 
     reg, instance = _get_builder(target, config)
     if instance is None:
+        return False
+
+    # Type gate -- AssemblyDef components use 'kiln assemble' not 'kiln package'
+    if reg.is_assembly_def(target):
+        print(
+            f"ERROR: '{target}' is an AssemblyDef -- use 'kiln assemble' instead.\n"
+            f"       'kiln package' is only for BuildDef components.",
+            file=sys.stderr,
+        )
         return False
 
     component_dir = config.components_dir / target
@@ -951,7 +984,7 @@ def verb_package(target: str, config, cache: TieredCache,
         )
         return False
 
-    # Validate --push preconditions early — fail before doing any work
+    # Validate --push preconditions early -- fail before doing any work
     if push and cache._coffer is None:
         print(
             f"ERROR: --push requires coffer_host to be set in [cache] config.\n"
@@ -1009,8 +1042,6 @@ def verb_package(target: str, config, cache: TieredCache,
     print(f"  {target}: {len(runtime_files)} runtime files, "
           f"{len(buildtime_files)} buildtime files")
 
-    # Refuse to package if both tarballs would be empty — almost certainly
-    # means install didn't run or installed to an unexpected path.
     if not runtime_files and not buildtime_files:
         print(
             f"ERROR: {target}: no files matched any glob pattern.\n"
@@ -1021,11 +1052,10 @@ def verb_package(target: str, config, cache: TieredCache,
         reporter.update(target, Status.ERROR)
         return False
 
-    # Warn if only one side is empty — unusual but not always wrong
     if not runtime_files:
-        print(f"  WARNING: {target}: no runtime files matched — runtime tarball will be empty")
+        print(f"  WARNING: {target}: no runtime files matched -- runtime tarball will be empty")
     if not buildtime_files:
-        print(f"  WARNING: {target}: no buildtime files matched — buildtime tarball will be empty")
+        print(f"  WARNING: {target}: no buildtime files matched -- buildtime tarball will be empty")
 
     # --- Pack into tarballs ---
     with tempfile.TemporaryDirectory(prefix="kiln-package-") as tmp:
@@ -1033,7 +1063,6 @@ def verb_package(target: str, config, cache: TieredCache,
 
         def pack(files: list[Path], tarball: Path) -> bool:
             if not files:
-                # Write an empty tarball — artifact must be complete
                 result = subprocess.run(
                     ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
                      "--files-from=/dev/null"],
@@ -1051,10 +1080,8 @@ def verb_package(target: str, config, cache: TieredCache,
                     stderr=subprocess.PIPE,
                 )
             if result.returncode != 0:
-                print(
-                    f"ERROR: tar failed: {result.stderr.decode().strip()}",
-                    file=sys.stderr,
-                )
+                print(f"ERROR: tar failed: {result.stderr.decode().strip()}",
+                      file=sys.stderr)
                 return False
             return True
 
@@ -1065,12 +1092,10 @@ def verb_package(target: str, config, cache: TieredCache,
         if not pack(runtime_files, runtime_tarball):
             reporter.update(target, Status.ERROR)
             return False
-
         if not pack(buildtime_files, buildtime_tarball):
             reporter.update(target, Status.ERROR)
             return False
 
-        # --- Write manifest ---
         manifest_data = instance.manifest_fields()
         manifest_data["manifest_hash"] = manifest_hash
         manifest_file.write_text(
@@ -1078,7 +1103,6 @@ def verb_package(target: str, config, cache: TieredCache,
             encoding="utf-8",
         )
 
-        # --- Store locally first — always ---
         try:
             cache.store_local(manifest_hash, target, tmp_path)
         except Exception as exc:
@@ -1088,14 +1112,13 @@ def verb_package(target: str, config, cache: TieredCache,
 
         print(f"  {target}: cached locally as {manifest_hash[:16]}")
 
-        # --- Push to Coffer if requested ---
         if push:
             try:
                 cache.publish(manifest_hash, target, tmp_path)
                 print(f"  {target}: pushed to Coffer")
             except CofferUnavailable as exc:
                 print(
-                    f"ERROR: Coffer unreachable — local cache written, push failed.\n"
+                    f"ERROR: Coffer unreachable -- local cache written, push failed.\n"
                     f"       {exc.reason}\n"
                     f"       Re-run 'kiln package --push' when the server is available.",
                     file=sys.stderr,
@@ -1106,6 +1129,140 @@ def verb_package(target: str, config, cache: TieredCache,
                 print(f"ERROR: Coffer push failed: {exc}", file=sys.stderr)
                 reporter.update(target, Status.ERROR)
                 return False
+
+    reporter.update(target, Status.OK)
+    return True
+
+
+def verb_assemble(target: str, config, cache: TieredCache,
+                  reporter: Reporter, push: bool) -> bool:
+    """
+    Assemble an AssemblyDef component -- fetch all dep runtime artifacts
+    from cache and call instance.assemble_command().
+    AssemblyDef components only -- use 'kiln package' for BuildDef.
+
+    Output is written to <build_root>/.kiln/images/<target>/
+    --push accepted but not yet implemented (future: registry push).
+    """
+    import shutil
+    from kiln.dag import Resolver, ResolvedDAG, ResolveError
+
+    reg, instance = _get_builder(target, config)
+    if instance is None:
+        return False
+
+    # Type gate -- BuildDef components use 'kiln package' not 'kiln assemble'
+    if reg.is_build_def(target):
+        print(
+            f"ERROR: '{target}' is a BuildDef -- use 'kiln package' instead.\n"
+            f"       'kiln assemble' is only for AssemblyDef components.",
+            file=sys.stderr,
+        )
+        return False
+
+    reporter.update(target, Status.PACKAGE)
+
+    # --- Resolve DAG to get manifest hashes for all deps ---
+    lock     = KilnLock(config.lock_file)
+    resolver = Resolver(
+        components_root = config.components_dir,
+        cache           = _CacheStatAdapter(cache),
+        registry        = _RegistryStatAdapter(),
+        lock            = lock,
+        forge_base_hash = config.forge.base_image or "sha256:unconfigured",
+        toolchain_hash  = config.forge.toolchain  or "sha256:unconfigured",
+        max_weight      = config.scheduler.max_weight,
+    )
+    result = resolver.resolve(target)
+    if isinstance(result, ResolveError):
+        print(f"ERROR: DAG resolution failed: {result.message}", file=sys.stderr)
+        reporter.update(target, Status.ERROR)
+        return False
+
+    nodes     = result.components if isinstance(result, ResolvedDAG) else result.dag.components
+    dep_nodes = [n for n in nodes if n.name != target and n.output_store == "cache"]
+
+    # Fail fast -- all deps must be in cache
+    missing = [n for n in dep_nodes if not n.cache_hit]
+    if missing:
+        names = ", ".join(n.name for n in missing)
+        print(
+            f"ERROR: deps not in cache: {names}\n"
+            f"       Run 'kiln deps' to build missing deps first.",
+            file=sys.stderr,
+        )
+        reporter.update(target, Status.ERROR)
+        return False
+
+    # --- Fetch all dep runtime artifacts into a temp staging area ---
+    print(f"  {target}: fetching {len(dep_nodes)} dep runtime artifact(s)")
+
+    with tempfile.TemporaryDirectory(prefix="kiln-assemble-") as tmp:
+        tmp_path = Path(tmp)
+        artifact_inputs: dict[str, Path] = {}   # name -> dir containing tarballs
+
+        for node in dep_nodes:
+            dep_dir = tmp_path / node.name
+            dep_dir.mkdir()
+            try:
+                cache.fetch(node.manifest_hash, node.name, dep_dir)
+            except CofferUnavailable as exc:
+                print(f"ERROR: Coffer unreachable fetching {node.name}: {exc.reason}",
+                      file=sys.stderr)
+                reporter.update(target, Status.ERROR)
+                return False
+            except (CacheMiss, CacheError) as exc:
+                print(f"ERROR: failed to fetch {node.name}: {exc}", file=sys.stderr)
+                reporter.update(target, Status.ERROR)
+                return False
+
+            runtime = dep_dir / f"{node.name}.runtime.tar.zst"
+            if not runtime.exists():
+                print(
+                    f"ERROR: {node.name} has no runtime tarball in cache.\n"
+                    f"       Was it built with 'kiln package'?",
+                    file=sys.stderr,
+                )
+                reporter.update(target, Status.ERROR)
+                return False
+
+            artifact_inputs[node.name] = dep_dir
+            print(f"  {target}: fetched {node.name} ({node.manifest_hash[:12]})")
+
+        # --- Output directory for assembled artifacts ---
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # --- Call the component's assemble_command ---
+        try:
+            instance.assemble_command(artifact_inputs, output_dir)
+        except NotImplementedError as exc:
+            print(f"ERROR: {target}: assemble_command not implemented: {exc}",
+                  file=sys.stderr)
+            reporter.update(target, Status.ERROR)
+            return False
+        except Exception as exc:
+            print(f"ERROR: {target}: assemble failed: {exc}", file=sys.stderr)
+            if os.environ.get("KILN_TRACEBACK"):
+                import traceback
+                traceback.print_exc()
+            reporter.update(target, Status.ERROR)
+            return False
+
+        # --- Copy output to well-known location ---
+        # <build_root>/.kiln/images/<target>/
+        # Future: push to registry when --push is implemented
+        image_dir = config.build_root / ".kiln" / "images" / target
+        if image_dir.exists():
+            shutil.rmtree(image_dir)
+        image_dir.mkdir(parents=True)
+
+        for f in output_dir.iterdir():
+            shutil.copy2(f, image_dir / f.name)
+            print(f"  {target}: wrote {f.name} -> {image_dir}")
+
+        if push:
+            print(f"  WARNING: {target}: --push not yet implemented for AssemblyDef")
 
     reporter.update(target, Status.OK)
     return True
@@ -1131,14 +1288,16 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
         return verb_test(target, config, reporter)
     elif verb == "install":
         return verb_install(target, config, reporter)
+    elif verb == "package":
+        return verb_package(target, config, cache, reporter, push)
+    elif verb == "assemble":
+        return verb_assemble(target, config, cache, reporter, push)
     elif verb == "clean":
         return verb_clean(target, config, reporter)
     elif verb == "purge":
         return verb_purge(target, config, reporter)
     elif verb == "clear_cache":
         return verb_clear_cache(config, cache)
-    elif verb == "package":
-        return verb_package(target, config, cache, reporter, push)
     else:
         print(f"ERROR: unknown verb '{verb}'", file=sys.stderr)
         return False
@@ -1149,10 +1308,6 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
-    # Re-exec inside user+mount namespace if not already root.
-    # Required for ForgeInstance mount operations (overlayfs, squashfs).
-    # Only needed for verbs that invoke forge — but simpler to always do it.
-    
     parser = make_parser()
     args   = parser.parse_args(argv)
 
@@ -1169,7 +1324,7 @@ def main(argv: list[str] | None = None) -> int:
     if target is None:
         print(
             "ERROR: could not infer target from current directory.\n"
-            "       Run from components/<name>/ or use --target <name>",
+            "       Run from components/<n>/ or use --target <n>",
             file=sys.stderr,
         )
         return 1
