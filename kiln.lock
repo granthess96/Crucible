@@ -18,6 +18,8 @@ gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
 gzip.url https://ftp.gnu.org/gnu/gzip/gzip-1.13.tar.xz
 libpng.sha256 8c25a7792099a0089fa1cc76c94260d0bb3f1ec52b93671b572f8bb61577b732
 libpng.url https://download.sourceforge.net/libpng/libpng-1.6.44.tar.gz
+linux-headers.sha256 b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb
+linux-headers.url https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz
 make.sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
 make.url https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
 ncurses.commit 79b9071f2be20a24c7be031655a5638f6032f29f

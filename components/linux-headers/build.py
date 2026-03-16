@@ -6,8 +6,7 @@ class LinuxHeaders(ScriptBuild):
     version = '6.12'
     deps    = []
     source  = {
-        'git': 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git',
-        'ref': 'v6.12',
+        'url': 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz',
     }
 
     def configure_command(self, paths: BuildPaths) -> list[str]:

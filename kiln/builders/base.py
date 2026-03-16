@@ -343,7 +343,8 @@ class ImageDef(AssemblyDef):
     """
 
     # Override in subclass to pass extra flags to mksquashfs
-    squashfs_args: ClassVar[list[str]] = ['-comp', 'zstd', '-noappend']
+    squashfs_args: ClassVar[list[str]] = ['-comp', 'zstd', '-noappend',
+                                          '-force-uid', '0', '-force-gid', '0']
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()

@@ -830,23 +830,23 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
 def verb_build(target: str, config, reporter: Reporter) -> bool:
     """Compile inside forge."""
     from kiln.builders.base import BuildPaths
-
     if not _check_sentinel(config, target, "configured", "configure"):
         return False
-
     reg, instance = _get_builder(target, config)
     if instance is None:
         return False
-
     paths       = BuildPaths.for_component(target)
     script, cmd = _resolve_verb(instance, "build", paths)
     build_dir   = config.components_dir / target / "__build__"
-
     if script:
         ok = _forge_run_script(config, target, script, "build",
                                reporter, Status.BUILD, cwd=build_dir)
-    else:
+    elif cmd:
         ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir)
+    else:
+        print(f"  {target}: no build step -- skipping")
+        reporter.update(target, Status.OK)
+        return True
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -884,23 +884,23 @@ def verb_test(target: str, config, reporter: Reporter) -> bool:
 def verb_install(target: str, config, reporter: Reporter) -> bool:
     """DESTDIR install into __install__/ inside forge."""
     from kiln.builders.base import BuildPaths
-
     if not _check_sentinel(config, target, "configured", "configure"):
         return False
-
     reg, instance = _get_builder(target, config)
     if instance is None:
         return False
-
     paths       = BuildPaths.for_component(target)
     script, cmd = _resolve_verb(instance, "install", paths)
     build_dir   = config.components_dir / target / "__build__"
-
     if script:
         ok = _forge_run_script(config, target, script, "install",
                                reporter, Status.INSTALL, cwd=build_dir)
-    else:
+    elif cmd:
         ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir)
+    else:
+        print(f"  {target}: no install step -- skipping")
+        reporter.update(target, Status.OK)
+        return True
     if ok:
         reporter.update(target, Status.OK)
     return ok
@@ -1258,8 +1258,9 @@ def verb_assemble(target: str, config, cache: TieredCache,
         image_dir.mkdir(parents=True)
 
         for f in output_dir.iterdir():
-            shutil.copy2(f, image_dir / f.name)
-            print(f"  {target}: wrote {f.name} -> {image_dir}")
+            if f.is_file():
+                shutil.copy2(f, image_dir / f.name)
+                print(f"  {target}: wrote {f.name} -> {image_dir}")
 
         if push:
             print(f"  WARNING: {target}: --push not yet implemented for AssemblyDef")

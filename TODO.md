@@ -165,4 +165,26 @@ than re-execing the whole process:
 - Consider an internal --already-unshared flag as a stepping stone
   if full per-verb namespace management is too complex initially
 - Consider if forge can be launched in a separate process with the unshare state,
-  but leave kiln itself in pure user context
+  but leave kiln itself in pure user context## Per-Build Audit Artifacts
+
+Every component build should produce audit artifacts stored adjacent to the
+runtime/buildtime tarballs in the cache entry.
+
+### File Manifest
+After `kiln install`, walk `__install__/` and record every installed file with
+its path, size, and blake3 hash. Store as `<target>.filelist.txt` in the cache
+entry. Not part of the manifest hash (does not affect cache invalidation) but
+adjacent to it for audit purposes.
+
+### Build Logs
+Capture stdout+stderr of each forge invocation (configure, build, test,
+install). Compress with zstd. Store as `<target>.buildlog.tar.zst` in the
+cache entry.
+
+### Implementation Notes
+- `_forge_run()` and `_forge_run_script()` need to tee stdout/stderr to
+  `__build__/kiln-<verb>.log` while still streaming to terminal in verbose mode
+- `verb_package()` collects the per-verb logs, compresses them, and stores
+  alongside the runtime/buildtime tarballs
+- Filelist generation belongs in `verb_package()` before tarball packing,
+  walking `__install__/` with blake3 hashes

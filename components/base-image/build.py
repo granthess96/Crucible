@@ -1,6 +1,6 @@
-from kiln.builders.base import ScriptBuild, BuildPaths
+from kiln.builders.base import ImageDef, BuildPaths
 
-class BaseImage(ScriptBuild):
+class BaseImage(ImageDef):
     name    = 'base-image'
     version = '1.0'
     deps    = [
