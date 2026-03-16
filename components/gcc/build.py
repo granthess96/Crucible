@@ -1,3 +1,4 @@
+# components/gcc/build.py
 from kiln.builders.base import AutotoolsBuild, BuildPaths
 
 class GCC(AutotoolsBuild):
@@ -12,6 +13,8 @@ class GCC(AutotoolsBuild):
         '--disable-multilib',
         '--enable-shared',
         '--disable-werror',
+        '--disable-bootstrap',
         '--with-system-zlib',
+        'CC=/opt/tools/gcc-10/bin/gcc10-gcc',
+        'CXX=/opt/tools/gcc-10/bin/gcc10-g++',
     ]
-    cxx_flags = ['-fpermissive', '-Wno-error']

@@ -188,3 +188,10 @@ cache entry.
   alongside the runtime/buildtime tarballs
 - Filelist generation belongs in `verb_package()` before tarball packing,
   walking `__install__/` with blake3 hashes
+## Builder Base Class Hashing
+
+Changes to kiln/builders/base.py (AutotoolsBuild, CMakeBuild etc.) currently
+do not invalidate the cache. The manifest hash only covers the component's
+own build.py via builder_hash. Consider including a hash of the builder
+base class file (or the specific base class used) in the manifest to ensure
+base class changes trigger rebuilds.

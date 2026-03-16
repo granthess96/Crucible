@@ -13,8 +13,6 @@ findutils.sha256 1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f
 findutils.url https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
-gcc.sha256 e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da
-gcc.url https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
 glibc.commit d2097651cc57834dbfcaa102ddfacae0d86cfb66
 gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
 gmp.url https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz

@@ -135,7 +135,8 @@ class BuildDef(KilnComponent):
             "kind":           "build",
             "builder":        self.__class__.__name__,
             "source_git":     self.source.get("git", ""),
-            "comp_flags":     self.comp_flags,
+            "c_flags":        self.c_flags,
+            "cxx_flags":      self.cxx_flags,
             "link_flags":     self.link_flags,
             "configure_args": self.configure_args,
         })
@@ -187,22 +188,26 @@ class AutotoolsBuild(BuildDef):
         fields["configure_exe"] = self.configure_exe
         return fields
 
-def configure_command(self, paths: BuildPaths) -> list[str]:
-    cflags   = f"-I{paths.sysroot}/usr/include {' '.join(self.c_flags)}".strip()
-    cxxflags = f"-I{paths.sysroot}/usr/include {' '.join(self.cxx_flags)}".strip()
-    ldflags  = f"-L{paths.sysroot}/usr/lib64 -L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
-    pkg_config_path = (
-        f"{paths.sysroot}/usr/lib/pkgconfig"
-        f":{paths.sysroot}/usr/lib64/pkgconfig"
-    )
-    return [
-        f"{paths.source}/{self.configure_exe}",
-        "--prefix=/usr",
-        f"PKG_CONFIG_PATH={pkg_config_path}",
-        f"CFLAGS={cflags}",
-        f"CXXFLAGS={cxxflags}",
-        f"LDFLAGS={ldflags}",
-    ] + self.configure_args
+    def configure_command(self, paths: BuildPaths) -> list[str]:
+        if self.name == "gcc":
+            cflags   = f"{' '.join(self.c_flags)}".strip()
+            cxxflags = f"{' '.join(self.cxx_flags)}".strip()
+        else:
+            cflags   = f"-I{paths.sysroot}/usr/include {' '.join(self.c_flags)}".strip()
+            cxxflags = f"-I{paths.sysroot}/usr/include {' '.join(self.cxx_flags)}".strip()
+        ldflags  = f"-L{paths.sysroot}/usr/lib64 -L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
+        pkg_config_path = (
+            f"{paths.sysroot}/usr/lib/pkgconfig"
+            f":{paths.sysroot}/usr/lib64/pkgconfig"
+        )
+        return [
+            f"{paths.source}/{self.configure_exe}",
+            "--prefix=/usr",
+            f"PKG_CONFIG_PATH={pkg_config_path}",
+            f"CFLAGS={cflags}",
+            f"CXXFLAGS={cxxflags}",
+            f"LDFLAGS={ldflags}",
+        ] + self.configure_args
 
     def build_command(self, paths: BuildPaths) -> list[str]:
         return ['make', f'-j{os.cpu_count() or 4}']
