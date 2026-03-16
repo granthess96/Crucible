@@ -203,10 +203,6 @@ class ForgeInstance:
         self._mounted.append((workspace, 'kernel'))
 
     def _teardown(self):
-        """
-        Unmount in reverse order. Best-effort — always runs.
-        squashfuse mounts use fusermount -u; kernel mounts use umount.
-        """
         for mount_point, kind in reversed(self._mounted):
             if kind == 'fuse':
                 subprocess.run(
@@ -220,9 +216,22 @@ class ForgeInstance:
                     check=False,
                     capture_output=not self.verbose,
                 )
+        # Only remove instance dir after verifying no mounts remain
         if self._instance_dir and self._instance_dir.exists():
+            remaining = subprocess.run(
+            ['findmnt', '--json', '--submounts', str(self._instance_dir)],
+            capture_output=True,
+        )
+        if remaining.returncode != 0:
+            # No mounts found — safe to remove
             shutil.rmtree(self._instance_dir, ignore_errors=True)
-
+        else:
+            print(
+                f"WARNING: mounts still active under {self._instance_dir}, "
+                f"skipping cleanup to avoid data loss.",
+                file=sys.stderr,
+            )
+            
     def _chroot_path(self, host_path: Path) -> str:
         """
         Translate a host-side path to its equivalent inside the chroot.

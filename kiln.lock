@@ -12,6 +12,8 @@ findutils.url https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
 glibc.commit d2097651cc57834dbfcaa102ddfacae0d86cfb66
+gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+gmp.url https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz
 grep.sha256 1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab
 grep.url https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz
 gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
@@ -22,6 +24,10 @@ linux-headers.sha256 b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54
 linux-headers.url https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz
 make.sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
 make.url https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
+mpc.sha256 ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8
+mpc.url https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz
+mpfr.sha256 277807353a6726978996945af13e52829e3abd7a9a5b7fb2793894e18f1fcbb2
+mpfr.url https://www.mpfr.org/mpfr-4.2.1/mpfr-4.2.1.tar.xz
 ncurses.commit 79b9071f2be20a24c7be031655a5638f6032f29f
 ncurses.sha256 136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
 ncurses.url https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz

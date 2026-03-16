@@ -13,5 +13,5 @@ class GMP(AutotoolsBuild):
         '--enable-shared',
         '--enable-static',
     ]
-    comp_flags    = ['-Wno-error=pedantic']
+    comp_flags    = ['-Wno-error=pedantic', '-std=gnu17']
     runtime_globs = []
