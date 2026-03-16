@@ -1,6 +1,8 @@
 # kiln.lock — auto-generated, commit this file
 bash.sha256 0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba
 bash.url https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
+binutils.sha256 ce2017e059d63e67ddb9240e9d4ec49c2893605035cd60e92ad53177f4377237
+binutils.url https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
 bzip2.sha256 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
 bzip2.url https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
 coreutils.sha256 16535a9adf0b10037364e2d612aad3d9f4eca3a344949ced74d12faf4bd51d25
@@ -11,6 +13,8 @@ findutils.sha256 1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f
 findutils.url https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
+gcc.sha256 e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da
+gcc.url https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
 glibc.commit d2097651cc57834dbfcaa102ddfacae0d86cfb66
 gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
 gmp.url https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz

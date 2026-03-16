@@ -1,4 +1,3 @@
-# components/gcc/build.py
 from kiln.builders.base import AutotoolsBuild, BuildPaths
 
 class GCC(AutotoolsBuild):
@@ -15,3 +14,4 @@ class GCC(AutotoolsBuild):
         '--disable-werror',
         '--with-system-zlib',
     ]
+    cxx_flags = ['-fpermissive', '-Wno-error']
