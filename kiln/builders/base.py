@@ -5,22 +5,10 @@ Base classes for all kiln build and assembly components.
 Two class hierarchies:
   BuildDef    — compiles source into runtime + buildtime artifacts
   AssemblyDef — composes cached artifacts into environments or images
-
-BuildDef subclasses implement *_command() methods that return lists of
-strings — commands to run inside the forge chroot. They receive a
-BuildPaths instance carrying the chroot-internal paths, so the builder
-never needs to know where anything lives on the host.
-
-Verb → method mapping:
-  kiln configure  →  configure_command()
-  kiln build      →  build_command()
-  kiln test       →  test_command()      (returns [] if no tests)
-  kiln install    →  install_command()
 """
 
 from __future__ import annotations
 
-import os
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +23,6 @@ from typing import ClassVar
 class BuildPaths:
     """
     All paths are strings representing locations inside the forge chroot.
-    Derived from the component name and the fixed /workspace/ mount point.
 
     Example for component 'zlib':
       source  = /workspace/components/zlib/__source__
@@ -50,7 +37,6 @@ class BuildPaths:
 
     @classmethod
     def for_component(cls, name: str, workspace: str = "/workspace") -> BuildPaths:
-        """Construct BuildPaths for a named component at the standard locations."""
         base = f"{workspace}/components/{name}"
         return cls(
             source  = f"{base}/__source__",
@@ -65,20 +51,10 @@ class BuildPaths:
 # ---------------------------------------------------------------------------
 
 class KilnComponent(ABC):
-    """
-    Shared base for all component types — both BuildDef and AssemblyDef.
-    Class attributes are declared here and overridden in subclasses.
-    """
-
-    # --- Identity ---
-    name:    ClassVar[str]
-    version: ClassVar[str]
-
-    # --- DAG ---
-    deps: ClassVar[list[str]] = []
-
-    # --- Scheduler ---
-    build_weight: ClassVar[int] = 1
+    name:         ClassVar[str]
+    version:      ClassVar[str]
+    deps:         ClassVar[list[str]] = []
+    build_weight: ClassVar[int]       = 1
 
     def manifest_fields(self) -> dict[str, object]:
         return {
@@ -107,7 +83,7 @@ class BuildDef(KilnComponent):
     link_flags:     ClassVar[list[str]] = []
     configure_args: ClassVar[list[str]] = []
 
-    runtime_globs:   ClassVar[list[str]] = [
+    runtime_globs: ClassVar[list[str]] = [
         "usr/bin/**",
         "usr/lib/*.so*",
         "usr/lib64/*.so*",
@@ -129,12 +105,23 @@ class BuildDef(KilnComponent):
         "usr/lib64/*.so*",
     ]
 
+    def _resolve(self, values: list[str], paths: BuildPaths) -> list[str]:
+        context = {
+            "sysroot": paths.sysroot,
+            "source":  paths.source,
+            "build":   paths.build,
+            "install": paths.install,
+            "version": self.version,
+            "name":    self.name,
+        }
+        return [v.format_map(context) for v in values]
+
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()
         fields.update({
             "kind":           "build",
             "builder":        self.__class__.__name__,
-            "source_git":     self.source.get("git", ""),
+            "source_pin":     self.source.get("git", self.source.get("url", "")),
             "c_flags":        self.c_flags,
             "cxx_flags":      self.cxx_flags,
             "link_flags":     self.link_flags,
@@ -143,23 +130,16 @@ class BuildDef(KilnComponent):
         return fields
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement configure_command()")
+        raise NotImplementedError
 
     def build_command(self, paths: BuildPaths) -> list[str]:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement build_command()")
+        raise NotImplementedError
 
     def test_command(self, paths: BuildPaths) -> list[str]:
-        return []   # default: no tests
+        return []
 
     def install_command(self, paths: BuildPaths) -> list[str]:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement install_command()")
-
-    # --- Script overrides ---
-    # Return a bash script body instead of a command list.
-    # Written to __build__/kiln-<verb>.sh and executed inside forge.
-    # Takes precedence over the corresponding *_command() method.
-    # Use when a verb needs multi-step logic, env vars, or conditionals
-    # that don't fit cleanly in a single command list.
+        raise NotImplementedError
 
     def configure_script(self, paths: BuildPaths) -> "str | None":
         return None
@@ -175,140 +155,6 @@ class BuildDef(KilnComponent):
 
 
 # ---------------------------------------------------------------------------
-# Concrete BuildDef subclasses
-# ---------------------------------------------------------------------------
-
-class AutotoolsBuild(BuildDef):
-    """./configure && make && make install"""
-
-    configure_exe: ClassVar[str] = "configure"   # relative to __source__/
-
-    def manifest_fields(self) -> dict[str, object]:
-        fields = super().manifest_fields()
-        fields["configure_exe"] = self.configure_exe
-        return fields
-
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        cflags   = f"{' '.join(self.c_flags)}".strip()
-        cxxflags = f"{' '.join(self.cxx_flags)}".strip()
-
-        ldflags  = f"{' '.join(self.link_flags)}".strip()
-        
-        return [
-            f"{paths.source}/{self.configure_exe}",
-            f"CFLAGS={cflags}",
-            f"CXXFLAGS={cxxflags}",
-            f"LDFLAGS={ldflags}",
-        ] + self.configure_args
-
-    def build_command(self, paths: BuildPaths) -> list[str]:
-        return ['make', f'-j{os.cpu_count() or 4}']
-
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        # DESTDIR redirects the install into __install__/ without affecting
-        # the baked-in prefix — files land at __install__/usr/lib/ etc.
-        return ['make', f'DESTDIR={paths.install}', 'install']
-
-
-class CMakeBuild(BuildDef):
-    """cmake configure + build + install"""
-
-    cmake_generator: ClassVar[str] = "Ninja"
-
-    def manifest_fields(self) -> dict[str, object]:
-        fields = super().manifest_fields()
-        fields["cmake_generator"] = self.cmake_generator
-        return fields
-
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        cmd = [
-            'cmake', paths.source,
-            f'-B{paths.build}',
-            f'-DCMAKE_STAGING_PREFIX={paths.install}/usr',
-            f'-G{self.cmake_generator}',
-            '-DCMAKE_C_COMPILER_WORKS=1',
-            '-DCMAKE_CXX_COMPILER_WORKS=1',
-        ]
-        
-        if self.c_flags:
-            cmd.append(f'-DCMAKE_C_FLAGS={" ".join(self.c_flags)}')
-        if self.cxx_flags:
-            cmd.append(f'-DCMAKE_CXX_FLAGS={" ".join(self.cxx_flags)}')
-        if self.link_flags:
-            cmd.append(f'-DCMAKE_EXE_LINKER_FLAGS={" ".join(self.link_flags)}')
-        return cmd + self.configure_args                    
-
-    def build_command(self, paths: BuildPaths) -> list[str]:
-        return ['cmake', '--build', paths.build,
-                '--parallel', str(os.cpu_count() or 4)]
-
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        return ['cmake', '--install', paths.build]
-
-
-class MakeBuild(BuildDef):
-    """Plain Makefile — no configure step, build in source dir."""
-
-    make_targets:    ClassVar[list[str]] = ['all']
-    install_targets: ClassVar[list[str]] = ['install']
-
-    def manifest_fields(self) -> dict[str, object]:
-        fields = super().manifest_fields()
-        fields['make_targets']    = self.make_targets
-        fields['install_targets'] = self.install_targets
-        return fields
-
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        return []   # no configure step
-
-    def build_command(self, paths: BuildPaths) -> list[str]:
-        return [
-            'make', f'-j{os.cpu_count() or 4}',
-            '-C', paths.source,
-        ] + self.make_targets
-
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        return [
-            'make',
-            '-C', paths.source,
-            f'PREFIX=/usr',
-            f'DESTDIR={paths.install}',
-        ] + self.install_targets
-
-
-class MesonBuild(BuildDef):
-    """meson setup + meson compile + meson install"""
-
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        return [
-            'meson', 'setup',
-            paths.build, paths.source,
-            f'--prefix={paths.install}',
-            f'--pkg-config-path={paths.sysroot}/usr/lib/pkgconfig',
-        ] + self.configure_args
-
-    def build_command(self, paths: BuildPaths) -> list[str]:
-        return ['meson', 'compile', '-C', paths.build,
-                '-j', str(os.cpu_count() or 4)]
-
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        return ['meson', 'install', '-C', paths.build]
-
-
-class ScriptBuild(BuildDef):
-    """Arbitrary build logic — override *_command() methods directly."""
-
-    def configure_command(self, paths: BuildPaths) -> list[str]:
-        return []
-
-    def build_command(self, paths: BuildPaths) -> list[str]:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement build_command()")
-
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement install_command()")
-
-
-# ---------------------------------------------------------------------------
 # Hierarchy 2: AssemblyDef
 # ---------------------------------------------------------------------------
 
@@ -316,7 +162,6 @@ class AssemblyDef(KilnComponent):
     """
     Composes existing cached artifacts into a deployable environment or image.
     Does NOT compile. Does NOT use forge.
-    Output goes to the container registry, not the artifact cache.
     """
 
     config_dir: ClassVar[Path | None] = None
@@ -329,78 +174,3 @@ class AssemblyDef(KilnComponent):
     def assemble_command(self, artifact_inputs: dict[str, Path],
                          output_dir: Path) -> None:
         raise NotImplementedError
-
-class ImageDef(AssemblyDef):
-    """
-    Assembles dep runtime artifacts into a squashfs image.
-    Subclasses declare deps and optionally override squashfs_args
-    or post_install() for image-specific fixups.
-
-    Output: <output_dir>/image.sqsh
-    """
-
-    # Override in subclass to pass extra flags to mksquashfs
-    squashfs_args: ClassVar[list[str]] = ['-comp', 'zstd', '-noappend',
-                                          '-force-uid', '0', '-force-gid', '0']
-
-    def manifest_fields(self) -> dict[str, object]:
-        fields = super().manifest_fields()
-        fields.update({
-            "kind":          "image",
-            "squashfs_args": self.squashfs_args,
-        })
-        return fields
-
-    def post_install(self, rootfs: Path) -> None:
-        """
-        Override to perform image-specific fixups after all runtime
-        tarballs have been extracted but before mksquashfs runs.
-        Examples: create symlinks, write /etc files, add device nodes.
-        """
-        pass
-
-    def assemble_command(self, artifact_inputs: dict[str, Path],
-                         output_dir: Path) -> None:
-        import subprocess
-
-        rootfs = output_dir / 'rootfs'
-        rootfs.mkdir(parents=True, exist_ok=True)
-
-        # Extract runtime tarballs in topo order
-        for name, artifact_dir in artifact_inputs.items():
-            runtime = artifact_dir / f'{name}.runtime.tar.zst'
-            if not runtime.exists():
-                raise RuntimeError(
-                    f'{name}: missing runtime tarball — '
-                    f'was it built with kiln package?'
-                )
-            result = subprocess.run(
-                ['tar', '--use-compress-program=zstd', '-xf', str(runtime),
-                 '-C', str(rootfs)],
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f'{name}: failed to extract runtime tarball')
-
-        # Image-specific fixups
-        self.post_install(rootfs)
-
-        # Pack into squashfs
-        sqsh = output_dir / 'image.sqsh'
-        result = subprocess.run(
-            ['mksquashfs', str(rootfs), str(sqsh)] + self.squashfs_args,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f'{self.name}: mksquashfs failed')
-
-
-class ContainerDef(AssemblyDef):
-    """
-    Assembles dep runtime artifacts into an OCI/podman container image.
-    TBD — subclass AssemblyDef when container support is needed.
-    """
-
-    def assemble_command(self, artifact_inputs: dict[str, Path],
-                         output_dir: Path) -> None:
-        raise NotImplementedError(
-            f'{self.name}: ContainerDef.assemble_command not yet implemented'
-        )
