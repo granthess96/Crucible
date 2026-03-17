@@ -15,7 +15,6 @@ class NcursesBuild(AutotoolsBuild):
         '--with-cxx-shared',
         '--without-ada',
         '--enable-pc-files',
-        '--with-pkg-config-libdir=/usr/lib/pkgconfig',
         '--disable-db-install',
         '--with-bool=bool',
     ]

@@ -189,21 +189,13 @@ class AutotoolsBuild(BuildDef):
         return fields
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
-        if self.name == "gcc":
-            cflags   = f"{' '.join(self.c_flags)}".strip()
-            cxxflags = f"{' '.join(self.cxx_flags)}".strip()
-        else:
-            cflags   = f"-I{paths.sysroot}/usr/include {' '.join(self.c_flags)}".strip()
-            cxxflags = f"-I{paths.sysroot}/usr/include {' '.join(self.cxx_flags)}".strip()
-        ldflags  = f"-L{paths.sysroot}/usr/lib64 -L{paths.sysroot}/usr/lib {' '.join(self.link_flags)}".strip()
-        pkg_config_path = (
-            f"{paths.sysroot}/usr/lib/pkgconfig"
-            f":{paths.sysroot}/usr/lib64/pkgconfig"
-        )
+        cflags   = f"{' '.join(self.c_flags)}".strip()
+        cxxflags = f"{' '.join(self.cxx_flags)}".strip()
+
+        ldflags  = f"{' '.join(self.link_flags)}".strip()
+        
         return [
             f"{paths.source}/{self.configure_exe}",
-            "--prefix=/usr",
-            f"PKG_CONFIG_PATH={pkg_config_path}",
             f"CFLAGS={cflags}",
             f"CXXFLAGS={cxxflags}",
             f"LDFLAGS={ldflags}",
@@ -232,22 +224,19 @@ class CMakeBuild(BuildDef):
         cmd = [
             'cmake', paths.source,
             f'-B{paths.build}',
-            f'-DCMAKE_PREFIX_PATH={paths.sysroot}/usr',
-            f'-DCMAKE_INSTALL_PREFIX=/usr',
             f'-DCMAKE_STAGING_PREFIX={paths.install}/usr',
             f'-G{self.cmake_generator}',
             '-DCMAKE_C_COMPILER_WORKS=1',
             '-DCMAKE_CXX_COMPILER_WORKS=1',
-            f'-DCMAKE_LIBRARY_PATH={paths.sysroot}/usr/lib64;{paths.sysroot}/usr/lib',
-            f'-DCMAKE_INCLUDE_PATH={paths.sysroot}/usr/include',
         ]
         
-        if self.comp_flags:
-            flags = ' '.join(self.comp_flags)
-            cmd += [f'-DCMAKE_C_FLAGS={flags}', f'-DCMAKE_CXX_FLAGS={flags}']
+        if self.c_flags:
+            cmd.append(f'-DCMAKE_C_FLAGS={" ".join(self.c_flags)}')
+        if self.cxx_flags:
+            cmd.append(f'-DCMAKE_CXX_FLAGS={" ".join(self.cxx_flags)}')
         if self.link_flags:
             cmd.append(f'-DCMAKE_EXE_LINKER_FLAGS={" ".join(self.link_flags)}')
-        return cmd + self.configure_args
+        return cmd + self.configure_args                    
 
     def build_command(self, paths: BuildPaths) -> list[str]:
         return ['cmake', '--build', paths.build,

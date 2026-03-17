@@ -2,12 +2,13 @@ from kiln.builders.base import AutotoolsBuild
 
 class GlibcBuild(AutotoolsBuild):
     name    = "glibc"
-    version = "2.42"
+    version = "2.38"
     deps    = ['linux-headers']
     weight  = 6
     source  = {
-        "git": "https://sourceware.org/git/glibc.git",
-        "ref": "glibc-2.42",
+        "url": "https://ftp.gnu.org/gnu/glibc/glibc-2.38.tar.xz"
+#        "git": "https://sourceware.org/git/glibc.git",
+#        "ref": "glibc-2.42",
     }
 
     configure_args = [
