@@ -52,6 +52,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import IO
 
+from pip._vendor.rich import status
+
 
 # ---------------------------------------------------------------------------
 # Status tags
@@ -295,6 +297,10 @@ class Reporter:
         return log
 
     # --- Status updates ---
+    def _set_terminal_title(self, title: str) -> None:
+        if sys.stdout.isatty():
+            sys.stdout.write(f"\033]0;{title}\007")
+            sys.stdout.flush()
 
     def update(self, component_name: str, status: Status) -> None:
         """Update the status of a component. Thread-safe."""
@@ -305,6 +311,16 @@ class Reporter:
 
             prev = row.status
             row.status = status
+            
+            row.status = status
+
+            # Update terminal title for active builds
+            if status not in _TERMINAL_STATUSES and status not in (Status.PENDING, Status.WAITING):
+                self._set_terminal_title(f"kiln: {component_name} [{status.name.lower()}]")
+            elif status == Status.OK:
+                self._set_terminal_title(f"kiln: {component_name} ✓")
+            elif status == Status.ERROR:
+                self._set_terminal_title(f"kiln: {component_name} ✗")
 
             # Track timing
             if status not in _TERMINAL_STATUSES and prev in (Status.PENDING, Status.WAITING):
@@ -327,6 +343,7 @@ class Reporter:
 
     def finish(self) -> None:
         """Print final summary line."""
+        self._set_terminal_title("kiln")
         elapsed = time.monotonic() - self._start_time
         ok      = sum(1 for r in self._rows if r.status == Status.OK)
         cached  = sum(1 for r in self._rows if r.status == Status.CACHED)
