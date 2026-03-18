@@ -1,12 +1,15 @@
 # components/zlib/build.py
-from kiln.builders.base import CMakeBuild
+from kiln.builders import CMakeBuild
 
-class ZlibBuild(CMakeBuild):
+class Zlib(CMakeBuild):
     name    = 'zlib'
     version = '1.3.2'
     cmake_generator = 'Unix Makefiles'
-    deps    = []
+    deps    = ['glibc','linux-headers']
     source  = {
         'url': 'https://zlib.net/zlib-1.3.2.tar.gz'
     }
-    configure_args = ['-DCMAKE_BUILD_TYPE=Release']
+
+    configure_args = [
+        '-DCMAKE_INSTALL_PREFIX=/usr',
+    ]

@@ -1,4 +1,4 @@
-from kiln.builders.base import ImageDef, BuildPaths
+from kiln.builders import ImageDef, BuildPaths
 
 class BaseImage(ImageDef):
     name    = 'base-image'

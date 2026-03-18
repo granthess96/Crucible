@@ -29,19 +29,23 @@ class CMakeBuild(BuildDef):
             "cmake", paths.source,
             f"-B{paths.build}",
             f"-DCMAKE_STAGING_PREFIX={paths.install}/usr",
+            f"-DCMAKE_SYSROOT={paths.sysroot}",
             f"-G{self.cmake_generator}",
             "-DCMAKE_C_COMPILER_WORKS=1",
             "-DCMAKE_CXX_COMPILER_WORKS=1",
         ]
 
-        if self.c_flags:
-            cmd.append(f"-DCMAKE_C_FLAGS={' '.join(self._resolve(self.c_flags, paths))}")
-        if self.cxx_flags:
-            cmd.append(f"-DCMAKE_CXX_FLAGS={' '.join(self._resolve(self.cxx_flags, paths))}")
+        c_flags   = ["--sysroot={sysroot}"] + self.c_flags
+        cxx_flags = ["--sysroot={sysroot}"] + self.cxx_flags
+
+        cmd.append(f"-DCMAKE_C_FLAGS={' '.join(self._resolve(c_flags, paths))}")
+        cmd.append(f"-DCMAKE_CXX_FLAGS={' '.join(self._resolve(cxx_flags, paths))}")
+
         if self.link_flags:
             cmd.append(f"-DCMAKE_EXE_LINKER_FLAGS={' '.join(self._resolve(self.link_flags, paths))}")
 
         return cmd + self._resolve(self.configure_args, paths)
+
 
     def build_command(self, paths: BuildPaths) -> list[str]:
         return [

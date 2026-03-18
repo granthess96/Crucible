@@ -1,21 +1,21 @@
-# components/ncurses/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
-class NcursesBuild(AutotoolsBuild):
+class Ncurses(AutotoolsBuild):
     name    = 'ncurses'
     version = '6.5'
-    deps    = ['glibc']
+    deps    = ['glibc', 'linux-headers']
     source  = {
         'url': 'https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz',
     }
     configure_args = [
+        '--prefix=/usr',
         '--with-shared',
+        '--without-debug',
         '--enable-widec',
         '--with-cxx-binding',
-        '--with-cxx-shared',
         '--without-ada',
-        '--enable-pc-files',
-        '--disable-db-install',
-        '--with-bool=bool',
+        '--disable-nls',
     ]
-    comp_flags = ['-O2', '-std=c++17', '-std=gnu17']
+
+
+    c_flags = ['-std=gnu17']

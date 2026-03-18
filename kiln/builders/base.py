@@ -122,6 +122,7 @@ class BuildDef(KilnComponent):
             "kind":           "build",
             "builder":        self.__class__.__name__,
             "source_pin":     self.source.get("git", self.source.get("url", "")),
+            "build_env":      {"sysroot_isolation": True},
             "c_flags":        self.c_flags,
             "cxx_flags":      self.cxx_flags,
             "link_flags":     self.link_flags,

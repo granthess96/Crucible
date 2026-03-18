@@ -1,5 +1,5 @@
 import os
-from kiln.builders.base import ScriptBuild, BuildPaths
+from kiln.builders import ScriptBuild, BuildPaths
 
 class LinuxHeaders(ScriptBuild):
     name    = 'linux-headers'

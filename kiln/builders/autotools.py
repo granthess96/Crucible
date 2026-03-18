@@ -25,11 +25,16 @@ class AutotoolsBuild(BuildDef):
         return fields
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
-        cflags   = " ".join(self._resolve(self.c_flags, paths)).strip()
-        cxxflags = " ".join(self._resolve(self.cxx_flags, paths)).strip()
-        ldflags  = " ".join(self._resolve(self.link_flags, paths)).strip()
+        cflags   = " ".join(['--sysroot={sysroot}'] + self.c_flags).strip()
+        cxxflags = " ".join(['--sysroot={sysroot}'] + self.cxx_flags).strip()
+        ldflags  = " ".join(['--sysroot={sysroot}'] + self.link_flags).strip()
+
+        cflags   = self._resolve([cflags], paths)[0]
+        cxxflags = self._resolve([cxxflags], paths)[0]
+        ldflags  = self._resolve([ldflags], paths)[0]
 
         cmd = [f"{paths.source}/{self.configure_exe}"]
+
 
         if cflags:
             cmd.append(f"CFLAGS={cflags}")

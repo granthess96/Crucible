@@ -27,6 +27,8 @@ libpng.sha256 8c25a7792099a0089fa1cc76c94260d0bb3f1ec52b93671b572f8bb61577b732
 libpng.url https://download.sourceforge.net/libpng/libpng-1.6.44.tar.gz
 linux-headers.sha256 b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb
 linux-headers.url https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz
+m4.sha256 e236ea3a1ccf5f6c270b1c4bb60726f371fa49459a8eaaebc90b216b328daf2b
+m4.url https://ftp.gnu.org/gnu/m4/m4-1.4.20.tar.xz
 make.sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
 make.url https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
 mpc.sha256 ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8

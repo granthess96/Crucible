@@ -8,8 +8,9 @@ Discovery rule:
   subclass of KilnComponent.  The directory name is the canonical component
   name and must match the class's `name` attribute.
 
-The registry is built once at resolver startup by scanning the components/
-directory.  It is intentionally read-only after construction.
+The registry lazily loads component build.py files on demand — a component
+is discovered by scanning the components/ directory but not imported until
+it is actually needed by the current build target's transitive dep tree.
 """
 
 from __future__ import annotations
@@ -42,7 +43,8 @@ class RegistryError(Exception):
 class ComponentRegistry:
     """
     Immutable map of component name → KilnComponent subclass.
-    Built by scanning the components/ directory tree.
+    Components are discovered eagerly by scanning the components/ directory
+    but loaded lazily on first access.
     """
 
     def __init__(self, components_root: Path):
@@ -50,9 +52,11 @@ class ComponentRegistry:
         self._classes: dict[str, Type[KilnComponent]] = {}
         self._build_py_paths: dict[str, Path] = {}
         self._patches_dirs: dict[str, Path | None] = {}
-        self._load_all()
+        self._discovered: dict[str, Path] = {}  # name → build.py path, unloaded
+        self._scan()
 
-    def _load_all(self) -> None:
+    def _scan(self) -> None:
+        """Discover available components without loading them."""
         if not self._root.is_dir():
             raise RegistryError(self._root, "components/ directory not found")
 
@@ -62,7 +66,18 @@ class ComponentRegistry:
             build_py = entry / "build.py"
             if not build_py.exists():
                 continue
-            self._load_one(entry, build_py)
+            self._discovered[entry.name] = build_py
+
+    def _ensure_loaded(self, name: str) -> None:
+        """Load a component's build.py if not already loaded."""
+        if name in self._classes:
+            return
+        if name not in self._discovered:
+            raise KeyError(name)
+        self._load_one(
+            self._discovered[name].parent,
+            self._discovered[name],
+        )
 
     def _load_one(self, component_dir: Path, build_py: Path) -> None:
         name = component_dir.name
@@ -121,40 +136,45 @@ class ComponentRegistry:
         # Detect patches directory
         patches_dir = component_dir / "patches"
 
-        self._classes[name]      = cls
+        self._classes[name]        = cls
         self._build_py_paths[name] = build_py
         self._patches_dirs[name]   = patches_dir if patches_dir.is_dir() else None
 
     # --- Public API ---
 
     def __contains__(self, name: str) -> bool:
-        return name in self._classes
+        return name in self._discovered
 
     def __len__(self) -> int:
-        return len(self._classes)
+        return len(self._discovered)
 
     def get(self, name: str) -> Type[KilnComponent]:
         """
         Return the class for a component name.
         Raises KeyError if not found — callers convert to ResolveError.
         """
+        self._ensure_loaded(name)
         return self._classes[name]
 
     def instantiate(self, name: str) -> KilnComponent:
         """Return a fresh instance of the component class."""
+        self._ensure_loaded(name)
         return self._classes[name]()
 
     def build_py_path(self, name: str) -> Path:
-        return self._build_py_paths[name]
+        return self._discovered[name]
 
     def patches_dir(self, name: str) -> Path | None:
+        self._ensure_loaded(name)
         return self._patches_dirs.get(name)
 
     def all_names(self) -> list[str]:
-        return sorted(self._classes.keys())
+        return sorted(self._discovered.keys())
 
     def is_build_def(self, name: str) -> bool:
+        self._ensure_loaded(name)
         return issubclass(self._classes[name], BuildDef)
 
     def is_assembly_def(self, name: str) -> bool:
+        self._ensure_loaded(name)
         return issubclass(self._classes[name], AssemblyDef)
