@@ -100,6 +100,8 @@ def make_parser() -> argparse.ArgumentParser:
         help="component to build (default: inferred from cwd)")
     parser.add_argument("--weight", metavar="N", type=int, default=None,
         help="override max_weight for this run")
+    parser.add_argument("--dry-run", action="store_true", dest="dry_run",
+        help="resolve and display dependency DAG, then exit without building")
     return parser
 
 
@@ -214,7 +216,7 @@ def _tag(status: Status) -> str:
 # ---------------------------------------------------------------------------
 
 def verb_deps(target: str, config, cache: TieredCache,
-              reporter: Reporter, push: bool) -> bool:
+              reporter: Reporter, push: bool, dry_run: bool) -> bool:
     """
     Resolve DAG, stat cache/registry, report hits/misses.
     If any deps are missing, build them in topo order before returning.
@@ -258,6 +260,10 @@ def verb_deps(target: str, config, cache: TieredCache,
         print(f"  {_tag(status)}  {node.name:<24}  {node.version:<12}  "
               f"weight:{node.build_weight}  {node.manifest_hash[:16]}")
     print(f"\n{hits} cached, {len(dep_misses)} dep(s) to build.")
+    
+    if dry_run:
+        # User just wanted to see the DAG and cache status -- don't build, just exit
+        return True
 
     if not dep_misses:
         # Only the target itself is missing -- deps are satisfied
@@ -1274,9 +1280,9 @@ def verb_assemble(target: str, config, cache: TieredCache,
 # ---------------------------------------------------------------------------
 
 def dispatch(verb: str, target: str, config, cache: TieredCache,
-             reporter: Reporter, push: bool) -> bool:
+             reporter: Reporter, push: bool, dry_run: bool) -> bool:
     if verb == "deps":
-        return verb_deps(target, config, cache, reporter, push)
+        return verb_deps(target, config, cache, reporter, push, dry_run)
     elif verb == "fetch":
         return verb_fetch(target, config, reporter)
     elif verb == "checkout":
@@ -1352,6 +1358,7 @@ def main(argv: list[str] | None = None) -> int:
                 cache    = cache,
                 reporter = reporter,
                 push     = args.push,
+                dry_run  = args.dry_run,
             )
         except KeyboardInterrupt:
             print("\nInterrupted.", file=sys.stderr)
