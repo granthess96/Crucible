@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+def _find_project_root():
+    for d in [Path.cwd(), *Path.cwd().parents]:
+        if (d / "forge.toml").exists():
+            return d
+    raise SystemExit("Error: forge.toml not found — are you inside a Crucible project?")
+
+sys.path.insert(0, str(_find_project_root()))
 from kiln.__main__ import main
 sys.exit(main())

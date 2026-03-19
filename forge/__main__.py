@@ -50,14 +50,13 @@ def main(argv=None) -> int:
     parser = make_parser()
     args   = parser.parse_args(argv)
 
-    # All forge operations run inside a user+mount namespace.
+    # All forge operations run inside a user+mount+network namespace.
     # Re-exec with unshare if not already root.
     if os.geteuid() != 0:
         os.execvp("unshare", [
-            "unshare", "--user", "--mount", "--map-root-user",
+            "unshare", "--user", "--mount", "--map-root-user", "--net",
             "--", sys.executable, *sys.argv,
         ])
-        # execvp replaces this process — never reached on success
         print("Error: unshare failed", file=sys.stderr)
         return 1
 
@@ -73,13 +72,23 @@ def main(argv=None) -> int:
         cmd = cmd[1:]
 
     # Resolve --cwd to a Path, falling back to host cwd
-    if args.cwd:
-        cwd = Path(args.cwd)
-    else:
-        cwd = Path.cwd()
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+
+    # Infer component path from cwd — must be inside components/<pkg>/
+    try:
+        rel = cwd.resolve().relative_to(config.build_root / "components")
+        component_path = config.build_root / "components" / rel.parts[0]
+    except (ValueError, IndexError):
+        print(
+            f"Error: must be run from inside a components/<pkg>/ directory\n"
+            f"  cwd: {cwd}\n"
+            f"  project root: {config.build_root}",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
-        with ForgeInstance(config, verbose=args.verbose) as instance:
+        with ForgeInstance(config, component_path, verbose=args.verbose) as instance:
             rc = instance.run(cmd, cwd=cwd)
         return rc
     except RuntimeError as exc:

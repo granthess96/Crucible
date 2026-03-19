@@ -37,12 +37,11 @@ class BuildPaths:
 
     @classmethod
     def for_component(cls, name: str, workspace: str = "/workspace") -> BuildPaths:
-        base = f"{workspace}/components/{name}"
         return cls(
-            source  = f"{base}/__source__",
-            build   = f"{base}/__build__",
-            sysroot = f"{base}/__sysroot__",
-            install = f"{base}/__install__",
+            source  = f"{workspace}/__source__",
+            build   = f"{workspace}/__build__",
+            sysroot = f"{workspace}/__sysroot__",
+            install = f"{workspace}/__install__",
         )
 
 

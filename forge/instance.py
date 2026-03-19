@@ -71,9 +71,10 @@ class ForgeInstance:
     Always cleans up mounts on exit, even on error.
     """
 
-    def __init__(self, config: CrucibleConfig, verbose: bool = False):
-        self.config       = config
-        self.verbose      = verbose
+    def __init__(self, config: CrucibleConfig, component_path: Path, verbose: bool = False):
+        self.config         = config
+        self.component_path = component_path  # e.g. <project_root>/components/zlib
+        self.verbose        = verbose
         self._instance_dir: Path | None = None
         self._merged:       Path | None = None
         self._mounted:      list[tuple] = []  # (Path, "fuse"|"kernel")
@@ -196,10 +197,9 @@ class ForgeInstance:
                  self.verbose)
             self._mounted.append((chroot_node, 'kernel'))
 
-        # 7. Project root → /workspace
+        # 7. Component directory → /workspace
         workspace = self._merged / WORKSPACE_PATH.lstrip('/')
-        _run(['mount', '--bind',
-              str(self.config.build_root), str(workspace)], self.verbose)
+        _run(['mount', '--bind', str(self.component_path), str(workspace)], self.verbose)
         self._mounted.append((workspace, 'kernel'))
 
     def _teardown(self):
@@ -222,9 +222,9 @@ class ForgeInstance:
             ['findmnt', '--json', '--submounts', str(self._instance_dir)],
             capture_output=True,
         )
-        if remaining.returncode != 0:
-            # No mounts found — safe to remove
-            shutil.rmtree(self._instance_dir, ignore_errors=True)
+            if remaining.returncode != 0:
+                # No mounts found — safe to remove
+                shutil.rmtree(self._instance_dir, ignore_errors=True)
         else:
             print(
                 f"WARNING: mounts still active under {self._instance_dir}, "
@@ -233,15 +233,8 @@ class ForgeInstance:
             )
             
     def _chroot_path(self, host_path: Path) -> str:
-        """
-        Translate a host-side path to its equivalent inside the chroot.
-        host: <project_root>/components/zlib
-        chroot: /workspace/components/zlib
-        """
         try:
-            rel = host_path.resolve().relative_to(
-                self.config.build_root.resolve()
-            )
+            rel = host_path.resolve().relative_to(self.component_path.resolve())
             return str(Path(WORKSPACE_PATH) / rel)
         except ValueError:
             return WORKSPACE_PATH
