@@ -1,5 +1,5 @@
 # components/gawk/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class Gawk(AutotoolsBuild):
     name    = 'gawk'

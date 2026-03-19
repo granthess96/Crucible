@@ -1,5 +1,5 @@
 # components/xz/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class Xz(AutotoolsBuild):
     name    = 'xz'

@@ -1,5 +1,5 @@
 # components/tools-image/build.py
-from kiln.builders.base import ImageDef
+from kiln.builders import ImageDef
 
 class ToolsImage(ImageDef):
     name    = 'tools-image'

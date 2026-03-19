@@ -10,7 +10,6 @@ class GlibcBuild(AutotoolsBuild):
     }
 
     configure_args = [
-        '--prefix=/usr',
         '--enable-kernel=6.1',
         '--disable-werror',
         '--with-headers=/workspace/components/glibc/__sysroot__/usr/include',

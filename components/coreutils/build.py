@@ -1,4 +1,4 @@
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+from kiln.builders import AutotoolsBuild, BuildPaths
 
 class CoreUtils(AutotoolsBuild):
     name    = 'coreutils'

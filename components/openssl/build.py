@@ -1,5 +1,5 @@
 # components/openssl/build.py
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+from kiln.builders import AutotoolsBuild, BuildPaths
 
 class OpenSSL(AutotoolsBuild):
     name    = 'openssl'

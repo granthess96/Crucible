@@ -1,6 +1,6 @@
 # components/gcc/build.py
 import os
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+from kiln.builders import AutotoolsBuild, BuildPaths
 
 sysroot_path = os.path.abspath('../__sysroot__')
 

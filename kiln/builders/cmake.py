@@ -9,8 +9,6 @@ from __future__ import annotations
 import os
 from typing import ClassVar
 
-import cmd
-
 from kiln.builders.base import BuildDef, BuildPaths
 
 

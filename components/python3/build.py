@@ -1,4 +1,4 @@
-from kiln.builders.base import AutotoolsBuild, BuildPaths
+from kiln.builders import AutotoolsBuild, BuildPaths
 
 class Python3(AutotoolsBuild):
     name    = 'python3'
@@ -8,7 +8,6 @@ class Python3(AutotoolsBuild):
         'url': 'https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tar.xz',
     }
     configure_args = [
-        '--prefix=/usr',
         '--sysroot=/sysroot',
         '--without-ensurepip',
         '--disable-test-modules',

@@ -1,4 +1,4 @@
-from kiln.builders.base import ScriptBuild, BuildPaths
+from kiln.builders import ScriptBuild, BuildPaths
 
 class Perl(ScriptBuild):
     name    = 'perl'

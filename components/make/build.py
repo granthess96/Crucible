@@ -1,5 +1,5 @@
 # components/make/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class Make(AutotoolsBuild):
     name    = 'make'

@@ -9,8 +9,6 @@ from __future__ import annotations
 import os
 from typing import ClassVar
 
-import cmd
-
 from kiln.builders.base import BuildDef, BuildPaths
 
 
@@ -33,8 +31,7 @@ class AutotoolsBuild(BuildDef):
         cxxflags = self._resolve([cxxflags], paths)[0]
         ldflags  = self._resolve([ldflags], paths)[0]
 
-        cmd = [f"{paths.source}/{self.configure_exe}"]
-
+        cmd = [f"{paths.source}/{self.configure_exe}", "--prefix=/usr", "--disable-nls"]
 
         if cflags:
             cmd.append(f"CFLAGS={cflags}")

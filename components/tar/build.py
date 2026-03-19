@@ -1,5 +1,5 @@
 # components/tar/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class Tar(AutotoolsBuild):
     name    = 'tar'

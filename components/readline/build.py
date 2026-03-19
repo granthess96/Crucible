@@ -9,7 +9,6 @@ class Readline(AutotoolsBuild):
     }
 
     configure_args = [
-        '--prefix=/usr',
         '--with-curses={sysroot}/usr',
         '--enable-shared',
     ]

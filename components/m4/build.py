@@ -7,7 +7,3 @@ class M4(AutotoolsBuild):
     source  = {
         'url': 'https://ftp.gnu.org/gnu/m4/m4-1.4.20.tar.xz',
     }
-    configure_args = [
-        '--prefix=/usr',
-        '--disable-nls',
-    ]

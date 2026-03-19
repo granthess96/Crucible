@@ -1,5 +1,5 @@
 # components/curl/build.py
-from kiln.builders.base import CMakeBuild
+from kiln.builders import CMakeBuild
 
 class CurlBuild(CMakeBuild):
     name         = 'curl'

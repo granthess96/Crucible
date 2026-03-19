@@ -1,5 +1,5 @@
 # components/mpc/build.py
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class MPC(AutotoolsBuild):
     name    = 'mpc'

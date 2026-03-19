@@ -1,4 +1,4 @@
-from kiln.builders.base import AutotoolsBuild
+from kiln.builders import AutotoolsBuild
 
 class Flex(AutotoolsBuild):
     name    = 'flex'
@@ -7,8 +7,3 @@ class Flex(AutotoolsBuild):
     source  = {
         'url': 'https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz',
     }
-    configure_args = [
-        '--prefix=/usr',
-        '--sysroot=/sysroot',
-        '--disable-nls',
-    ]

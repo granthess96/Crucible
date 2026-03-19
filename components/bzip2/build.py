@@ -1,5 +1,5 @@
 # components/bzip2/build.py
-from kiln.builders.base import MakeBuild, BuildPaths
+from kiln.builders import MakeBuild, BuildPaths
 
 class Bzip2(MakeBuild):
     name    = 'bzip2'
