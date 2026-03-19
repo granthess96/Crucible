@@ -12,7 +12,7 @@ class GlibcBuild(AutotoolsBuild):
     configure_args = [
         '--enable-kernel=6.1',
         '--disable-werror',
-        '--with-headers=/workspace/components/glibc/__sysroot__/usr/include',
+        '--with-headers=/{sysroot}/usr/include',
     ]
     
     c_flags = ["-O2", "-D_FORTIFY_SOURCE=2"]   

@@ -40,6 +40,7 @@ Examples:
 
 from __future__ import annotations
 
+import datetime
 import os
 import sys
 from pathlib import Path
@@ -699,6 +700,8 @@ def _forge_run(config, target: str, cmd: list[str],
     forge handles its own unshare -- kiln stays in user context throughout.
     Returns True on success.
     """
+    
+    print(f"DEBUG command cmd: {' '.join(cmd)}")
     reporter.update(target, status)
     effective_cwd = cwd or config.components_dir / target
 
@@ -1315,6 +1318,9 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    print(f"[{datetime.datetime.now().isoformat(timespec='seconds')}] kiln {' '.join(sys.argv[1:])}", flush=True)
+
+    print("---------------------------------------------------------------------------")
     parser = make_parser()
     args   = parser.parse_args(argv)
 

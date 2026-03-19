@@ -195,3 +195,38 @@ do not invalidate the cache. The manifest hash only covers the component's
 own build.py via builder_hash. Consider including a hash of the builder
 base class file (or the specific base class used) in the manifest to ensure
 base class changes trigger rebuilds.
+## Session TODO — 2026-03-19
+
+### crucible.log — shared logging helper
+- [ ] Create `crucible/log.py` with `init(log_path: Path | None)` and `log(msg: str)`
+- [ ] Timestamps in `[YYYY-MM-DDTHH:MM:SS]` format on every line
+- [ ] `init()` sets module-level log path — stdout-only if `None`
+- [ ] All output goes to stdout AND appends to `__install__/logs/build.log`
+- [ ] Replace ad-hoc prints in `kiln/__main__.py`, `forge/__main__.py`, `kiln/dag.py` with `log()`
+- [ ] `verb_clean` and `verb_purge` already wipe `__install__/` — log resets naturally
+
+### Build log as cache artifact
+- [ ] `_forge_run` and `_forge_run_script` capture stdout+stderr to `__build__/kiln-<verb>.log`
+- [ ] Log file header: timestamp + exact forge command line
+- [ ] Each verb overwrites its own log (last run wins)
+- [ ] `verb_package` globs `__build__/kiln-*.log` and bundles into `<name>.build-log.tar.zst`
+- [ ] `verb_assemble` same — bundle assemble logs into `<name>.build-log.tar.zst`
+- [ ] Update `cache.fetch()` / `_populate_sysroot` to also unpack logs into `__sysroot__/build_logs/<depname>/`
+- [ ] Update `cache.fetch()` / `_populate_sysroot` to unpack manifests into `__sysroot__/manifests/<depname>.manifest.txt`
+
+### Provenance attestation document
+- [ ] `verb_assemble` produces `<name>.provenance.json` alongside image output
+- [ ] Contains per-component: manifest fields, source identity, forge base + toolchain hashes
+- [ ] References build logs by component name (already in `__sysroot__/build_logs/`)
+- [ ] kiln.lock entries included for full source pinning record
+- [ ] Goes into image output dir, pushed to vault with the image
+
+### cmake component
+- [ ] Convert `components/cmake/build.py` from `AutotoolsBuild` to `CMakeBuild`
+- [ ] cmake is in the base image — no bootstrap needed
+- [ ] Remove explicit `--prefix=/usr` once converted (handled by `CMAKE_STAGING_PREFIX`)
+
+### Parallel builds (future)
+- [ ] DAG topo order already correct — leaves first
+- [ ] Scheduler dispatches any node whose dep_nodes are all cache hits or completed this run
+- [ ] `build_weight` field already present on each node for load management

@@ -411,6 +411,7 @@ class Resolver:
             )
 
         output_store: Literal["cache", "registry"] = "cache" if is_build else "registry"
+        print(f"  checking: {name}", flush=True)
         cache_hit = self._stat(name, manifest.hash, output_store)
 
         return ComponentNode(
