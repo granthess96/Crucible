@@ -31,8 +31,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+from unittest import result
 
 from crucible.config import CrucibleConfig
 
@@ -203,19 +205,39 @@ class ForgeInstance:
         self._mounted.append((workspace, 'kernel'))
 
     def _teardown(self):
+        # Kill any processes still using the chroot before attempting umounts
+        if self._merged and self._merged.exists():
+            subprocess.run(
+                ['fuser', '-km', str(self._merged)],
+                check=False,
+                capture_output=not self.verbose,
+            )
+        
         for mount_point, kind in reversed(self._mounted):
             if kind == 'fuse':
-                subprocess.run(
+                result = subprocess.run(
                     ['fusermount', '-u', str(mount_point)],
                     check=False,
                     capture_output=not self.verbose,
                 )
+                if result.returncode != 0:
+                    print(
+                        f"WARNING: fusermount failed for {mount_point}: "
+                        f"{result.stderr.decode().strip()}",
+                        file=sys.stderr,
+                    )
             else:
-                subprocess.run(
+                result = subprocess.run(
                     ['umount', str(mount_point)],
                     check=False,
                     capture_output=not self.verbose,
                 )
+                if result.returncode != 0:
+                    print(
+                        f"WARNING: umount failed for {mount_point}: "
+                        f"{result.stderr.decode().strip()}",
+                        file=sys.stderr,
+                    )
         # Only remove instance dir after verifying no mounts remain
         if self._instance_dir and self._instance_dir.exists():
             remaining = subprocess.run(
