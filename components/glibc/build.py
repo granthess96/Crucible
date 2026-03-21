@@ -4,7 +4,7 @@ class GlibcBuild(AutotoolsBuild):
     name    = "glibc"
     version = "2.38"
     deps    = ['linux-headers']
-    weight  = 6
+    build_weight  = 6
     source  = {
         "url": "https://ftp.gnu.org/gnu/glibc/glibc-2.38.tar.xz"
     }

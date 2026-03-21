@@ -1,6 +1,6 @@
-from kiln.builders import AutotoolsBuild
+from kiln.builders import CMakeBuild
 
-class CMake(AutotoolsBuild):
+class CMake(CMakeBuild):
     name    = 'cmake'
     version = '3.31.6'
     deps    = ['glibc', 'linux-headers', 'zlib', 'openssl']
@@ -8,13 +8,9 @@ class CMake(AutotoolsBuild):
         'url': 'https://cmake.org/files/v3.31/cmake-3.31.6.tar.gz',
     }
     configure_args = [
-        '--prefix=/usr',
-        '--sysroot=/sysroot',
-        '--parallel=$(nproc)',
-        '--no-system-jsoncpp',
-        '--no-system-librhash',
-        '--system-zlib',
-        '--system-openssl',
-        '--with-zlib=/sysroot/usr',
-        '--with-openssl=/sysroot/usr',
+        '-DCMAKE_USE_OPENSSL=ON',
+        '-DZLIB_ROOT={sysroot}/usr',
+        '-DOPENSSL_ROOT_DIR={sysroot}/usr',
+        '-DBUILD_TESTING=OFF',
+        '-DCMAKE_BUILD_TYPE=Release',
     ]

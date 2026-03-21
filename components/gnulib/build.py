@@ -3,7 +3,7 @@ from kiln.builders import ScriptBuild, BuildPaths
 class Gnulib(ScriptBuild):
     name    = 'gnulib'
     version = '2024-a65f999'   # date or short SHA for human readability
-    deps    = []
+    deps    = ['glibc', 'linux-headers']
     source  = {
         'git': 'https://git.savannah.gnu.org/git/gnulib.git',
         'ref': 'a65f999035e18eb802e5cf8b624ae15620ee67fa',

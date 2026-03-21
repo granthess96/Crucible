@@ -8,7 +8,6 @@ class Python3(AutotoolsBuild):
         'url': 'https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tar.xz',
     }
     configure_args = [
-        '--sysroot=/sysroot',
         '--without-ensurepip',
         '--disable-test-modules',
         '--without-decimal-contextvar',
@@ -19,5 +18,5 @@ class Python3(AutotoolsBuild):
         '--without-dbm',
         '--without-gdbm',
         '--without-tkinter',
-        '--with-zlib=/sysroot/usr',
+        '--with-zlib=/{sysroot}/usr',
     ]

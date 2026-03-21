@@ -3,7 +3,7 @@ from kiln.builders import AutotoolsBuild, BuildPaths
 class CoreUtils(AutotoolsBuild):
     name    = 'coreutils'
     version = '9.10'
-    deps    = ['glibc', 'ncurses']
+    deps    = ['glibc', 'ncurses', 'linux-headers']
     source  = {
         'url' : 'https://ftp.gnu.org/gnu/coreutils/coreutils-9.10.tar.xz'                
     }

@@ -5,7 +5,13 @@
 # base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
 # toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
 #base_image = "vault:blake3:bcea4985f2cd2feb109fc277fa5e76b99b805cdf90e78cf8ddc0150d113a3bc0"
-base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+
+# the -DNF based boostrap image
+#base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+
+# test image - bootstrapping
+base_image = "vault:blake3:85844726316f86dfa4c86238442b9363cd938bf5a1af3c52c013cfb935e3c889"
+
 toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
 
 

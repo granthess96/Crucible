@@ -4,7 +4,7 @@ from kiln.builders import MakeBuild, BuildPaths
 class Bzip2(MakeBuild):
     name    = 'bzip2'
     version = '1.0.8'
-    deps    = ['glibc']
+    deps    = ['glibc', 'linux-headers']
     source  = {
         'url': 'https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz',
     }

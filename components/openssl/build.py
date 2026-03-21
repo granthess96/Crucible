@@ -4,7 +4,7 @@ from kiln.builders import AutotoolsBuild, BuildPaths
 class OpenSSL(AutotoolsBuild):
     name    = 'openssl'
     version = '3.4.1'
-    deps    = ['zlib']
+    deps    = ['zlib' , 'linux-headers', 'glibc']
     source  = {
         'url': 'https://github.com/openssl/openssl/releases/download/openssl-3.4.1/openssl-3.4.1.tar.gz',
     }

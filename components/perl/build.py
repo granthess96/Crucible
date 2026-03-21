@@ -26,5 +26,8 @@ cd {paths.source}
 make -j$(nproc)
 """
 
-    def install_command(self, paths: BuildPaths) -> list[str]:
-        return ['make', f'DESTDIR={paths.install}', 'install']
+    def install_script(self, paths: BuildPaths) -> str:
+        return f"""
+cd {paths.source}
+make DESTDIR={paths.install} install
+"""

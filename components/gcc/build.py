@@ -7,7 +7,7 @@ sysroot_path = os.path.abspath('../__sysroot__')
 class GCC(AutotoolsBuild):
     name    = 'gcc'
     version = '15.2.0'
-    deps    = ['gmp', 'mpfr', 'mpc', 'binutils', 'glibc']
+    deps    = ['gmp', 'mpfr', 'mpc', 'binutils', 'glibc', 'linux-headers']
     source  = {
         'url': 'https://ftp.gnu.org/gnu/gcc/gcc-15.2.0/gcc-15.2.0.tar.xz',
     }
