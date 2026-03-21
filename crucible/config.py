@@ -3,12 +3,10 @@ crucible/config.py
 Shared configuration for kiln and forge.
 Both tools read from the same forge.toml at the project root.
 Neither tool should import from the other — both import from here.
-
 Two config sources, merged in order (later overrides earlier):
   1. forge.toml          — project config, committed to repo
   2. ~/.kiln/config.toml — machine-local overrides, never committed
   3. Environment vars    — CI overrides
-
 Discovery:
   Walk up from cwd looking for forge.toml.
   That directory is the project root — all relative paths resolve from there.
@@ -19,23 +17,28 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
 from crucible.vault_client import is_vault_ref, resolve_image
+
+# Environment variable names — set by forge/__main__.py before unshare
+# so that vault resolution (which needs network) happens before the
+# network namespace is entered.
+_ENV_BASE  = "FORGE_BASE_IMAGE_PATH"
+_ENV_TOOLS = "FORGE_TOOLCHAIN_PATH"
 
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
-
 class ConfigError(Exception):
     pass
 
 # ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
-
 @dataclass
 class VaultConfig:
-    url: str = "http://localhost:7777"  # default vault URL
-    
+    url: str = "http://localhost:7777"
+
 @dataclass
 class ForgeConfig:
     base_image: str = ""       # path or registry URI for base squashfs
@@ -44,13 +47,11 @@ class ForgeConfig:
 @dataclass
 class CacheConfig:
     local:              Path       = field(default_factory=lambda: Path.home() / ".kiln" / "cache")
-
     # Coffer remote cache (SSH-based)
-    coffer_host:        str        = ""    # user@hostname  e.g. cache@build.example.com
+    coffer_host:        str        = ""
     coffer_port:        int        = 22
-    coffer_cachectl:    str        = ""    # override server cachectl path (default: /home/<user>/bin/cachectl)
-    coffer_ssh_timeout: int        = 10   # seconds
-
+    coffer_cachectl:    str        = ""
+    coffer_ssh_timeout: int        = 10
     # Legacy / future
     global_url:         str | None = None
 
@@ -102,7 +103,17 @@ class CrucibleConfig:
 
     @property
     def base_image_path(self) -> Path:
-        """Resolved path to base squashfs image."""
+        """
+        Resolved path to base squashfs image.
+
+        Resolution order:
+          1. FORGE_BASE_IMAGE_PATH env var — set by forge/__main__.py before
+             unshare so vault resolution happens outside the network namespace.
+          2. forge.toml base_image — vault:blake3: ref or plain path.
+          3. Default: <project_root>/images/base.sqsh
+        """
+        if p := os.environ.get(_ENV_BASE):
+            return Path(p)
         if self.forge.base_image:
             if is_vault_ref(self.forge.base_image):
                 return resolve_image(
@@ -115,7 +126,17 @@ class CrucibleConfig:
 
     @property
     def toolchain_path(self) -> Path:
-        """Resolved path to toolchain squashfs image."""
+        """
+        Resolved path to toolchain squashfs image.
+
+        Resolution order:
+          1. FORGE_TOOLCHAIN_PATH env var — set by forge/__main__.py before
+             unshare so vault resolution happens outside the network namespace.
+          2. forge.toml toolchain — vault:blake3: ref or plain path.
+          3. Default: <project_root>/images/tools.sqsh
+        """
+        if p := os.environ.get(_ENV_TOOLS):
+            return Path(p)
         if self.forge.toolchain:
             if is_vault_ref(self.forge.toolchain):
                 return resolve_image(
@@ -123,10 +144,9 @@ class CrucibleConfig:
                     self.forge.toolchain,
                     self.local_cache_dir,
                 )
-
             return Path(self.forge.toolchain).expanduser()
         return self.build_root / "images" / "tools.sqsh"
-    
+
     @property
     def tarball_cache_dir(self) -> Path:
         return self.build_root / ".kiln" / "tarball-cache"
@@ -134,7 +154,6 @@ class CrucibleConfig:
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
-
 def find_project_root(start: Path | None = None) -> Path:
     """
     Walk up from start (default: cwd) looking for forge.toml.
@@ -153,7 +172,6 @@ def find_project_root(start: Path | None = None) -> Path:
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
-
 def load_config(start: Path | None = None) -> CrucibleConfig:
     """
     Find forge.toml, load project config, overlay machine-local config.
@@ -192,21 +210,18 @@ def _apply_toml(config: CrucibleConfig, path: Path) -> None:
         return
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
-    
+
     if vault := data.get("vault"):
         if v := vault.get("url"):
             config.vault.url = v
-
     if forge := data.get("forge"):
         if v := forge.get("base_image"): config.forge.base_image = v
         if v := forge.get("toolchain"):  config.forge.toolchain  = v
-
     if cache := data.get("cache"):
         if v := cache.get("local"):
             config.cache.local = Path(v)
         if v := cache.get("global"):
             config.cache.global_url = v
-        # Coffer remote cache settings
         if v := cache.get("coffer_host"):
             config.cache.coffer_host = v
         if v := cache.get("coffer_port"):
@@ -221,10 +236,8 @@ def _apply_toml(config: CrucibleConfig, path: Path) -> None:
                 config.cache.coffer_ssh_timeout = int(v)
             except (ValueError, TypeError):
                 raise ConfigError(f"coffer_ssh_timeout must be an integer in {path}")
-
     if registry := data.get("registry"):
         if v := registry.get("url"): config.registry.url = v
-
     if scheduler := data.get("scheduler"):
         if v := scheduler.get("max_weight"):
             config.scheduler.max_weight = int(v)
@@ -232,32 +245,24 @@ def _apply_toml(config: CrucibleConfig, path: Path) -> None:
 # ---------------------------------------------------------------------------
 # forge.toml template — written by `kiln init`
 # ---------------------------------------------------------------------------
-
 FORGE_TOML_TEMPLATE = """\
 # forge.toml — Crucible project root marker and configuration
 # Commit this file. Machine-local overrides go in ~/.kiln/config.toml
-
 [forge]
 # base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
 # toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
-
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache
-
 # Coffer remote cache — set coffer_host to enable.
 # Machine-local settings (host, port) belong in ~/.kiln/config.toml.
 # coffer_host        = "cache@build.example.com"  # user@hostname
 # coffer_port        = 22                          # default: 22
 # coffer_cachectl    = ""                          # default: /home/<user>/bin/cachectl
 # coffer_ssh_timeout = 10                          # seconds, default: 10
-
 [registry]
 url = ""                     # container registry URL
-
 [scheduler]
 max_weight = 8               # adjust per machine in ~/.kiln/config.toml
-
 [vault]
 url = "http://localhost:7777"  # default vault URL
-
 """

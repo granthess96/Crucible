@@ -22,11 +22,15 @@ if str(_here) not in sys.path:
 from crucible.config import load_config, ConfigError
 from forge.instance import ForgeInstance, create_dev_nodes
 
+# Environment variable names used to pass resolved image paths across the
+# unshare boundary — vault_client needs network access which is unavailable
+# inside the network namespace.
+_ENV_BASE  = "FORGE_BASE_IMAGE_PATH"
+_ENV_TOOLS = "FORGE_TOOLCHAIN_PATH"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
-
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog        = "forge",
@@ -41,22 +45,41 @@ def make_parser() -> argparse.ArgumentParser:
         help='Command to run (default: interactive shell)')
     return parser
 
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-
 def main(argv=None) -> int:
     parser = make_parser()
     args   = parser.parse_args(argv)
 
     # All forge operations run inside a user+mount+network namespace.
     # Re-exec with unshare if not already root.
+    #
+    # Vault image resolution requires network access — resolve paths HERE,
+    # before entering the network namespace, and pass them via environment
+    # variables so the post-unshare process can use the cached local paths
+    # without needing to contact Vault.
     if os.geteuid() != 0:
-        os.execvp("unshare", [
+        env = os.environ.copy()
+
+        # Resolve image paths now while we still have network access
+        try:
+            cfg  = load_config()
+            env[_ENV_BASE]  = str(cfg.base_image_path)
+            env[_ENV_TOOLS] = str(cfg.toolchain_path)
+        except ConfigError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            # Don't block forge startup on resolution failure — let the
+            # post-unshare code surface the error with better context.
+            print(f"Warning: image path pre-resolution failed: {exc}",
+                  file=sys.stderr)
+
+        os.execvpe("unshare", [
             "unshare", "--user", "--mount", "--map-root-user", "--net",
             "--", sys.executable, *sys.argv,
-        ])
+        ], env)
         print("Error: unshare failed", file=sys.stderr)
         return 1
 
@@ -97,7 +120,6 @@ def main(argv=None) -> int:
     except subprocess.CalledProcessError as exc:
         print(f"Error: mount failed: {exc}", file=sys.stderr)
         return 1
-
 
 if __name__ == '__main__':
     sys.exit(main())

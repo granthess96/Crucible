@@ -230,3 +230,192 @@ base class changes trigger rebuilds.
 - [ ] DAG topo order already correct — leaves first
 - [ ] Scheduler dispatches any node whose dep_nodes are all cache hits or completed this run
 - [ ] `build_weight` field already present on each node for load management
+
+
+
+# TODO.md — Kiln Packaging & Provenance Evolution
+
+## 🧭 Goal
+
+Evolve Kiln’s packaging system from a **glob-based file selector** into a **policy-driven, observable, and reproducible artifact classifier**, while preserving flexibility for future transition into dependency-closure-based runtime image generation.
+
+The system must support:
+- deterministic builds
+- explicit classification of all installed files
+- strict or relaxed packaging policies per component
+- observable reasoning for why files are included/excluded
+- clean separation between runtime artifacts and provenance artifacts
+
+---
+
+# 1. 📦 Packaging Model Evolution
+
+## Current State
+- runtime_globs + buildtime_globs determine packaging
+- silent exclusion of unmatched files
+- no classification traceability
+
+## Target State
+Introduce a **classification-aware packaging pipeline**:
+
+### Every file in `__install__` must be classified into:
+- runtime
+- buildtime
+- unclassified (explicitly tracked, never silent)
+
+### Output of packaging step:
+- runtime files
+- buildtime files
+- unclassified files (must always be reported)
+
+---
+
+# 2. 🧩 Glob System Enhancements
+
+## 2.1 Glob Composition Modes
+
+Support three composition modes for globs:
+
+### (A) Replace (default behavior today)
+```python
+runtime_globs = ["usr/bin/**"]
+(B) Append (additive extension)
+runtime_globs_add = ["lib64/ld-linux*"]
+(C) Override via method (escape hatch)
+def runtime_globs(self, paths):
+    return super().runtime_globs(paths) + ["extra/pattern/**"]
+2.2 Rule Resolution Order
+Base class globs
+Component override globs
+_add globs (append layer)
+Optional method override (final authority)
+3. 🧠 Packaging Policy System
+
+Introduce a per-component PackagePolicy.
+
+3.1 Default Policy
+
+All components inherit:
+
+PackagePolicy(
+    strict=False,
+    fail_on_unclassified=False,
+    allow_overlap=True,
+    report_unclassified=True,
+)
+3.2 Strict Mode
+
+When strict=True:
+
+all files must be classified
+unclassified files are treated as errors (or hard failures if enabled)
+3.3 Policy Overrides per Component
+package_policy = PackagePolicy(
+    strict=True,
+    fail_on_unclassified=True,
+)
+3.4 Optional Named Policies (future)
+"safe"
+"strict"
+"toolchain"
+"minimal"
+4. 📊 Required Packaging Reporting
+
+Every build MUST produce:
+
+component: X
+runtime files: N
+buildtime files: N
+unclassified files: N
+
+If unclassified > 0:
+
+always log file list
+never silently drop
+
+Optional:
+
+fail build if strict mode enabled
+5. 🔍 Classification Transparency (Debug Mode)
+
+Add traceability for each file:
+
+file path
+matched rule
+classification result
+
+Example:
+
+lib64/libc.so.6 → runtime_globs[1] → runtime
+
+This is critical for debugging ABI and packaging issues (e.g., glibc, ROCm).
+
+6. 📁 Separation of Install vs Provenance Artifacts
+6.1 Install Directory (__install__)
+
+Must remain:
+
+minimal runtime filesystem
+no logs
+no build metadata
+no test outputs
+6.2 Provenance Directory (__provenance__)
+
+Introduced as first-class output:
+
+Contains:
+
+build logs
+test logs
+file manifests
+hash listings
+SBOM-style metadata
+dependency graphs
+
+Provenance is ALWAYS external to install.
+
+7. 🧾 Mandatory Provenance Artifacts
+
+For every build:
+
+7.1 Build log
+captured stdout/stderr of full build
+7.2 File manifest
+full listing of install tree
+includes hashes
+excludes itself
+7.3 Optional test artifact
+unit test output if available
+7.4 Hash bundle
+deterministic hash of install tree
+used for image identity
+8. 🔐 Future Extension Hooks (DO NOT IMPLEMENT YET)
+
+Design packaging system to remain compatible with:
+
+Future model:
+dependency-closure based runtime generation
+hardware-targeted binary selection (e.g. ROCm GPU ISAs)
+ABI-aware dependency resolution
+
+Globs must not become a hard constraint on future evolution.
+
+9. 🚨 Key Principles
+Nothing is silently excluded
+Every file must be accounted for
+Runtime images remain minimal and pure
+Provenance is first-class but separate
+Policies define behavior, not structure
+Globs define intent, not truth
+10. 🧭 Long-Term Direction (Context Only)
+
+This system is trending toward:
+
+deterministic GPU runtime image generation with provable ABI correctness and hardware-level stability validation
+
+including:
+
+ROCm / CUDA specialized closures
+pinned toolchain reproducibility
+long-run burn-in validation pipelines (future phase)
+End of TODO

@@ -94,14 +94,14 @@ class GarageStore:
         except ClientError:
             raise KeyError(f"Blob not found: {digest}")
         
-def list_blobs(self) -> list[dict]:
-    result = []
-    paginator = self.s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=self.bucket, Prefix="blobs/"):
-        for obj in page.get("Contents", []):
-            digest = obj["Key"].removeprefix("blobs/")
-            result.append({"digest": digest, "size": obj["Size"]})
-    return result
+    def list_blobs(self) -> list[dict]:
+        result = []
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix="blobs/"):
+            for obj in page.get("Contents", []):
+                digest = obj["Key"].removeprefix("blobs/")
+                result.append({"digest": digest, "size": obj["Size"]})
+        return result
 
     # ── Name operations ──────────────────────────────────────────
 
@@ -138,19 +138,19 @@ def list_blobs(self) -> list[dict]:
         )
         return record
     
-def list_names(self) -> list[dict]:
-    result = []
-    paginator = self.s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=self.bucket, Prefix="names/"):
-        for obj in page.get("Contents", []):
-            name = obj["Key"].removeprefix("names/")
-            try:
-                record = self.get_name(name)
-                record["name"] = name
-                result.append(record)
-            except KeyError:
-                pass
-    return result            
+    def list_names(self) -> list[dict]:
+        result = []
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix="names/"):
+            for obj in page.get("Contents", []):
+                name = obj["Key"].removeprefix("names/")
+                try:
+                    record = self.get_name(name)
+                    record["name"] = name
+                    result.append(record)
+                except KeyError:
+                    pass
+        return result            
 
     # ── Health ───────────────────────────────────────────────────
 
@@ -162,9 +162,9 @@ def list_names(self) -> list[dict]:
             return False
 
 
-def _hash_file(path: Path) -> str:
-    h = blake3.blake3()
-    with path.open("rb") as f:
-        while chunk := f.read(CHUNK):
-            h.update(chunk)
-    return h.hexdigest()
+    def _hash_file(path: Path) -> str:
+        h = blake3.blake3()
+        with path.open("rb") as f:
+            while chunk := f.read(CHUNK):
+                h.update(chunk)
+        return h.hexdigest()
