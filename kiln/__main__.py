@@ -1052,7 +1052,7 @@ def verb_package(target: str, config, cache: TieredCache,
                 continue
             rel = f.relative_to(install_dir)
             for pattern in globs:
-                if rel.match(pattern):
+                if rel.full_match(pattern):
                     matched.append(f)
                     break
         return matched

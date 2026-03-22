@@ -47,6 +47,11 @@ class GlibcBuild(AutotoolsBuild):
         "usr/libexec/**",
         "usr/lib/**/gconv/**",
         "var/**",
+        "lib64/**",
+        "sbin/**",
+        "usr/libexec/**",
+        "usr/lib/***/gconv/**",
+        "usr/lib64/gconv/**",
     ]
 
     buildtime_globs = AutotoolsBuild.buildtime_globs + [
