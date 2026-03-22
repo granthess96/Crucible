@@ -111,6 +111,7 @@ class BuildDef(KilnComponent):
         "usr/share/**",
         "etc/**",
         "share/**",
+        "usr/libexec/**",
     ]
 
     # Buildtime: headers, static libs, pkgconfig, cmake config, linker scripts.
@@ -132,6 +133,14 @@ class BuildDef(KilnComponent):
         "usr/lib64/**/cmake/**",
         "usr/lib/**/*.so",
         "usr/lib64/**/*.so",
+        "var/lib/**/*.la",
+        "var/lib64/**/*.la",
+        "usr/man/**",
+        "usr/share/man/**",
+        "usr/share/info/**",
+        "lib64/**",          # ld-linux, libc.so.6 etc — needed in sysroot for linking
+        "usr/lib64/**/*.o",
+        "usr/lib64/gconv/**",
     ]
 
     def _resolve(self, values: list[str], paths: BuildPaths) -> list[str]:

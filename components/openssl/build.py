@@ -10,12 +10,19 @@ class OpenSSL(AutotoolsBuild):
     }
 
     def configure_command(self, paths: BuildPaths) -> list[str]:
+        sysroot = paths.sysroot
         return [
             f'{paths.source}/Configure',
-            f'--prefix=/usr',
-            f'--with-zlib-include={paths.sysroot}/usr/include',
-            f'--with-zlib-lib={paths.sysroot}/usr/lib64',
+            '--prefix=/usr',
+            f'--with-zlib-include={sysroot}/usr/include',
+            f'--with-zlib-lib={sysroot}/usr/lib64',
             'zlib', 'shared', 'linux-x86_64',
+            f'--sysroot={sysroot}',
+            f'-isystem{sysroot}/usr/include',
+            f'-L{sysroot}/usr/lib64',
+            f'-Wl,--sysroot={sysroot}',
+            '-fPIC',
+            '-O2',
         ]
 
     def install_command(self, paths: BuildPaths) -> list[str]:

@@ -39,6 +39,14 @@ class CMakeBuild(BuildDef):
         cmd.append(f"-DCMAKE_C_FLAGS={' '.join(self._resolve(c_flags, paths))}")
         cmd.append(f"-DCMAKE_CXX_FLAGS={' '.join(self._resolve(cxx_flags, paths))}")
 
+        # Replace the link_flags block: 
+        linker_flags = " ".join(self._resolve(
+            [f"--sysroot={paths.sysroot}"] + self.link_flags, paths
+        ))
+        cmd.append(f"-DCMAKE_EXE_LINKER_FLAGS={linker_flags}")
+        cmd.append(f"-DCMAKE_SHARED_LINKER_FLAGS={linker_flags}")
+        cmd.append(f"-DCMAKE_MODULE_LINKER_FLAGS={linker_flags}")
+
         if self.link_flags:
             cmd.append(f"-DCMAKE_EXE_LINKER_FLAGS={' '.join(self._resolve(self.link_flags, paths))}")
 
