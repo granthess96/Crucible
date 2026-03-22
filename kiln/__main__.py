@@ -46,6 +46,7 @@ import sys
 from pathlib import Path
 import subprocess
 import tempfile
+import json
 
 
 _here = Path(__file__).parent.parent
@@ -963,9 +964,6 @@ def verb_package(target: str, config, cache: TieredCache,
     buildtime.tar.zst -- headers, .a libs, pkgconfig (buildtime_globs)
     manifest.txt      -- full canonical manifest fields
     """
-    import fnmatch
-    import json
-
     if not _check_sentinel(config, target, "configured", "configure"):
         return False
 
@@ -1034,22 +1032,56 @@ def verb_package(target: str, config, cache: TieredCache,
 
     # --- Collect files by glob pattern ---
     def collect(globs: list[str]) -> list[Path]:
+        """
+        Match files (and symlinks) under install_dir against glob patterns.
+
+        Uses PurePosixPath.match() which handles ** correctly across path
+        separators.  fnmatch treats ** identically to * and does not cross
+        separators, so patterns like 'usr/lib/**/*.so*' silently matched
+        nothing for any file more than one level deep.
+
+        Patterns are relative to install_dir (no leading slash).
+        Pattern examples:
+            usr/bin/**              — all files under usr/bin/ at any depth
+            usr/lib/**/*.so*        — .so, .so.6, .so.6.0.0 at any depth
+            usr/lib/**/pkgconfig/** — pkgconfig dirs in any lib subdirectory
+        """
         matched = []
         for f in sorted(install_dir.rglob("*")):
-            if not f.is_file():
+            if not f.is_file() and not f.is_symlink():
                 continue
             rel = f.relative_to(install_dir)
             for pattern in globs:
-                if fnmatch.fnmatch(str(rel), pattern):
+                if rel.match(pattern):
                     matched.append(f)
                     break
         return matched
 
+    # Collect every installed file/symlink for the unclassified report
+    all_installed   = sorted(
+        f for f in install_dir.rglob("*")
+        if f.is_file() or f.is_symlink()
+    )
     runtime_files   = collect(instance.runtime_globs)
     buildtime_files = collect(instance.buildtime_globs)
 
-    print(f"  {target}: {len(runtime_files)} runtime files, "
-          f"{len(buildtime_files)} buildtime files")
+    # --- Unclassified file report — nothing is ever silently dropped ---
+    runtime_set   = set(runtime_files)
+    buildtime_set = set(buildtime_files)
+    unclassified  = [
+        f for f in all_installed
+        if f not in runtime_set and f not in buildtime_set
+    ]
+
+    print(f"  {target}: {len(runtime_files)} runtime, "
+          f"{len(buildtime_files)} buildtime, "
+          f"{len(unclassified)} unclassified  "
+          f"({len(all_installed)} total installed files)")
+
+    if unclassified:
+        print(f"  {target}: UNCLASSIFIED (not captured in either tarball):")
+        for f in unclassified:
+            print(f"    unclassified: {f.relative_to(install_dir)}")
 
     if not runtime_files and not buildtime_files:
         print(
