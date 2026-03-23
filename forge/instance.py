@@ -29,7 +29,8 @@ Usage:
 from __future__ import annotations
 
 
-import shlex
+import importlib
+shlex = importlib.import_module('shlex')
 import shutil
 import subprocess
 import sys

@@ -41,6 +41,8 @@ mpfr.sha256 277807353a6726978996945af13e52829e3abd7a9a5b7fb2793894e18f1fcbb2
 mpfr.url https://www.mpfr.org/mpfr-4.2.1/mpfr-4.2.1.tar.xz
 ncurses.sha256 136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
 ncurses.url https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz
+ninja.sha256 821bdff48a3f683bc4bb3b6f0b5fe7b2d647cf65d52aeb63328c91a6c6df285a
+ninja.url https://github.com/ninja-build/ninja/archive/refs/tags/v1.12.1.tar.gz
 openssl.sha256 002a2d6b30b58bf4bea46c43bdd96365aaf8daa6c428782aa4feee06da197df3
 openssl.url https://github.com/openssl/openssl/releases/download/openssl-3.4.1/openssl-3.4.1.tar.gz
 patch.sha256 ac610bda97abe0d9f6b7c963255a11dcb196c25e337c61f94e4778d632f1d8fd

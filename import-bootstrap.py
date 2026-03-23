@@ -62,9 +62,9 @@ def store(path: Path, tag: str) -> str:
     return digest
 
 if __name__ == "__main__":
-    base  = store(Path("images/base.sqsh"),  "forge-base:bootstrap")
-    #tools = store(Path("images/tools.sqsh"), "forge-tools:bootstrap")
+    base  = store(Path("images/base.sqsh"),  "forge-base:bootstrap_from_source")
+    tools = store(Path("images/tools.sqsh"), "forge-tools:bootstrap")
 
     print("\n\n=== Add these to forge.toml [forge] section ===")
     print(f'base_image = "vault:blake3:{base}"')
-#    print(f'toolchain  = "vault:blake3:{tools}"')
+    print(f'toolchain  = "vault:blake3:{tools}"')

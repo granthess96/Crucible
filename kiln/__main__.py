@@ -335,6 +335,7 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
         return False
 
     stype = _source_type(source)
+
     if stype == "unknown":
         print(
             f"ERROR: {target}.source has no recognised key.\n"
@@ -346,6 +347,14 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
     lock      = KilnLock(config.lock_file)
     state_dir = config.build_root / ".kiln" / "state" / target
     state_dir.mkdir(parents=True, exist_ok=True)
+    
+    if stype == "none":
+        (state_dir / "source_id").write_text("none", encoding="utf-8")
+        (state_dir / "source_type").write_text("none", encoding="utf-8")
+        print(f"  {target}: no source (synthetic component)")
+        reporter.update(target, Status.OK)
+        return True
+    
 
     reporter.update(target, Status.FETCH)
 
@@ -510,20 +519,12 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
         print(f"ERROR: '{target}' is an AssemblyDef -- no source to check out",
               file=sys.stderr)
         return False
-
+    
     # --- Verify fetch was run ---
     state_dir = config.build_root / ".kiln" / "state" / target
     id_file   = state_dir / "source_id"
     type_file = state_dir / "source_type"
-
-    if not id_file.exists():
-        print(
-            f"ERROR: {target} has not been fetched.\n"
-            f"       Run 'kiln fetch' first.",
-            file=sys.stderr,
-        )
-        return False
-
+    
     source_id   = id_file.read_text(encoding="utf-8").strip()
     source_type = type_file.read_text(encoding="utf-8").strip() if type_file.exists() else "git"
 
@@ -535,6 +536,25 @@ def verb_checkout(target: str, config, cache, reporter: Reporter) -> bool:
     build_dir     = component_dir / "__build__"
     install_dir   = component_dir / "__install__"
     patches_dir   = component_dir / "patches"
+    
+    source_type = type_file.read_text(encoding="utf-8").strip() if type_file.exists() else "git"
+
+    if source_type == "none":
+        sysroot_dir.mkdir(exist_ok=True)
+        build_dir.mkdir(exist_ok=True)
+        install_dir.mkdir(exist_ok=True)
+        (state_dir / "checked_out").write_text("none\n", encoding="utf-8")
+        print(f"  {target}: no source (synthetic component)")
+        reporter.update(target, Status.OK)
+        return True
+
+    if not id_file.exists():
+        print(
+            f"ERROR: {target} has not been fetched.\n"
+            f"       Run 'kiln fetch' first.",
+            file=sys.stderr,
+        )
+        return False
 
     reporter.update(target, Status.FETCH)
 
@@ -692,28 +712,30 @@ def _check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bo
         return False
     return True
 
-
 def _forge_run(config, target: str, cmd: list[str],
                reporter: Reporter, status: Status,
-               cwd: Path | None = None) -> bool:
+               cwd: Path | None = None,
+               extra_env: dict[str, str] | None = None) -> bool:
     """
     Run cmd inside a forge environment via the forge CLI subprocess.
     forge handles its own unshare -- kiln stays in user context throughout.
+    extra_env: additional environment variables merged into the forge env.
     Returns True on success.
     """
-    
     reporter.update(target, status)
     effective_cwd = cwd or config.components_dir / target
-
+ 
     env = os.environ.copy()
     env['PYTHONPATH'] = str(_here)
-
+    if extra_env:
+        env.update(extra_env)
+ 
     forge_cmd = [
         sys.executable, '-m', 'forge',
         '--cwd', str(effective_cwd),
         '--',
     ] + [str(c) for c in cmd]
-
+ 
     try:
         result = subprocess.run(forge_cmd, check=False, env=env)
         if result.returncode != 0:
@@ -730,40 +752,39 @@ def _forge_run(config, target: str, cmd: list[str],
         print(f"ERROR: forge failed for {target}: {exc}", file=sys.stderr)
         return False
 
-
 def _forge_run_script(config, target: str, script_body: str,
                       verb: str, reporter: Reporter, status: Status,
-                      cwd: Path | None = None) -> bool:
+                      cwd: Path | None = None,
+                      extra_env: dict[str, str] | None = None) -> bool:
     """
     Write script_body to __build__/kiln-<verb>.sh on the host,
     then run it inside forge via the forge CLI subprocess.
-    The script file is left in place after the run for debugging.
-    forge handles its own unshare -- kiln stays in user context throughout.
+    extra_env: additional environment variables merged into the forge env.
     """
     build_dir   = config.components_dir / target / "__build__"
     script_path = build_dir / f"kiln-{verb}.sh"
-
-    # Prepend strict mode -- catches silent failures in multi-step scripts
+ 
     full_script = "#!/usr/bin/env bash\nset -euo pipefail\n\n" + script_body
     script_path.write_text(full_script, encoding="utf-8")
     script_path.chmod(0o755)
-
-    # Chroot-internal path to the script
+ 
     from kiln.builders.base import BuildPaths
     paths         = BuildPaths.for_component(target)
     chroot_script = f"{paths.build}/kiln-{verb}.sh"
-
+ 
     effective_cwd = cwd or build_dir
-
+ 
     env = os.environ.copy()
     env['PYTHONPATH'] = str(_here)
-
+    if extra_env:
+        env.update(extra_env)
+ 
     forge_cmd = [
         sys.executable, '-m', 'forge',
         '--cwd', str(effective_cwd),
         '--', 'bash', chroot_script,
     ]
-
+ 
     reporter.update(target, status)
     try:
         result = subprocess.run(forge_cmd, check=False, env=env)
@@ -818,12 +839,15 @@ def verb_configure(target: str, config, reporter: Reporter) -> bool:
     script, cmd = _resolve_verb(instance, "configure", paths)
     build_dir   = config.components_dir / target / "__build__"
     state_dir   = config.build_root / ".kiln" / "state" / target
+    extra_env   = instance._resolve_env(paths) 
 
     if script:
         ok = _forge_run_script(config, target, script, "configure",
-                               reporter, Status.CONFIG, cwd=build_dir)
+                               reporter, Status.CONFIG, cwd=build_dir, 
+                               extra_env=extra_env)
     elif cmd:
-        ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, cwd=build_dir)
+        ok = _forge_run(config, target, cmd, reporter, Status.CONFIG, 
+                        cwd=build_dir, extra_env=extra_env)
     else:
         print(f"  {target}: no configure step -- skipping")
         (state_dir / "configured").write_text("skipped\n")
@@ -847,11 +871,13 @@ def verb_build(target: str, config, reporter: Reporter) -> bool:
     paths       = BuildPaths.for_component(target)
     script, cmd = _resolve_verb(instance, "build", paths)
     build_dir   = config.components_dir / target / "__build__"
+    extra_env   = instance._resolve_env(paths) 
+    
     if script:
         ok = _forge_run_script(config, target, script, "build",
-                               reporter, Status.BUILD, cwd=build_dir)
+                               reporter, Status.BUILD, cwd=build_dir, extra_env=extra_env)
     elif cmd:
-        ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir)
+        ok = _forge_run(config, target, cmd, reporter, Status.BUILD, cwd=build_dir, extra_env=extra_env)
     else:
         print(f"  {target}: no build step -- skipping")
         reporter.update(target, Status.OK)
@@ -875,12 +901,13 @@ def verb_test(target: str, config, reporter: Reporter) -> bool:
     paths       = BuildPaths.for_component(target)
     script, cmd = _resolve_verb(instance, "test", paths)
     build_dir   = config.components_dir / target / "__build__"
+    extra_env   = instance._resolve_env(paths) 
 
     if script:
         ok = _forge_run_script(config, target, script, "test",
-                               reporter, Status.TEST, cwd=build_dir)
+                               reporter, Status.TEST, cwd=build_dir, extra_env=extra_env)
     elif cmd:
-        ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir)
+        ok = _forge_run(config, target, cmd, reporter, Status.TEST, cwd=build_dir, extra_env=extra_env)
     else:
         print(f"  {target}: no test suite defined -- skipping")
         reporter.update(target, Status.OK)
@@ -901,11 +928,13 @@ def verb_install(target: str, config, reporter: Reporter) -> bool:
     paths       = BuildPaths.for_component(target)
     script, cmd = _resolve_verb(instance, "install", paths)
     build_dir   = config.components_dir / target / "__build__"
+    extra_env   = instance._resolve_env(paths) 
+    
     if script:
         ok = _forge_run_script(config, target, script, "install",
-                               reporter, Status.INSTALL, cwd=build_dir)
+                               reporter, Status.INSTALL, cwd=build_dir, extra_env=extra_env)
     elif cmd:
-        ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir)
+        ok = _forge_run(config, target, cmd, reporter, Status.INSTALL, cwd=build_dir, extra_env=extra_env)
     else:
         print(f"  {target}: no install step -- skipping")
         reporter.update(target, Status.OK)

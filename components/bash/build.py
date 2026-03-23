@@ -1,5 +1,5 @@
 # components/bash/build.py
-from kiln.builders import AutotoolsBuild
+from kiln.builders import AutotoolsBuild, BuildPaths
 
 class BashBuild(AutotoolsBuild):
     name    = 'bash'

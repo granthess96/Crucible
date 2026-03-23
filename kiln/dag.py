@@ -452,10 +452,12 @@ class Resolver:
 # Source type helper
 # ---------------------------------------------------------------------------
 
-def _source_type(source: dict) -> Literal["git", "tarball", "unknown"]:
+def _source_type(source: dict) -> Literal["git", "tarball", "none", "unknown"]:
     """Classify a source dict from a build.py."""
     if "git" in source:
         return "git"
     if "url" in source:
         return "tarball"
+    if "source_type" in source and source["source_type"] == "none":
+        return "none"
     return "unknown"

@@ -10,6 +10,23 @@ A running list of design decisions, planned work, and deferred items.
 
 ---
 
+### Forge — Acive Tasks
+
+#### forge — stdlib shadowing bug (deferred)
+
+`forge/instance.py` imports `shlex` which resolves to
+`components/python3/__source__/Lib/shlex.py` after python3's
+checkout verb has run, because `PYTHONPATH` includes the project
+root and Python finds the source tree before stdlib.
+
+Only manifests on a full clean build after python3 has been
+checked out. Latent until then.
+
+Fix: in `kiln/__main__.py` `_forge_run()`, set `PYTHONPATH` to
+point only at the crucible package root, not the project root.
+Or use `importlib.import_module('shlex')` in `forge/instance.py`
+to force stdlib resolution. 
+
 ### Kiln — Active Tasks
 
 - [X] `kiln deps --dry-run` verbose mode: add `--verbose` flag that shows full

@@ -81,6 +81,7 @@ class BuildDef(KilnComponent):
     cxx_flags:      ClassVar[list[str]] = ['-fPIC', '-DPIC']
     link_flags:     ClassVar[list[str]] = []
     configure_args: ClassVar[list[str]] = []
+    build_env:      ClassVar[dict[str, str]] = {}
 
     # Runtime: shared libraries, executables, data files needed at runtime.
     #
@@ -153,6 +154,18 @@ class BuildDef(KilnComponent):
             "name":    self.name,
         }
         return [v.format_map(context) for v in values]
+    
+    def _resolve_env(self, paths: BuildPaths) -> dict[str, str]:
+        """Resolve {sysroot} etc. placeholders in build_env values."""
+        context = {
+            "sysroot": paths.sysroot,
+            "source":  paths.source,
+            "build":   paths.build,
+            "install": paths.install,
+            "version": self.version,
+            "name":    self.name,
+        }
+        return {k: v.format_map(context) for k, v in self.build_env.items()}    
 
     def manifest_fields(self) -> dict[str, object]:
         fields = super().manifest_fields()

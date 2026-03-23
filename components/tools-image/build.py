@@ -6,9 +6,13 @@ class ToolsImage(ImageDef):
     version = '1.0'
     deps    = [
         'gmp',
+        'libxcrypt',
         'mpfr',
         'mpc',
         'binutils',
         'gcc',
+        'zlib',
+        'glibc',
+        'linux-headers',
     ]
     source  = {}
