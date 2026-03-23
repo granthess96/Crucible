@@ -1,6 +1,8 @@
 # kiln.lock — auto-generated, commit this file
 bash.sha256 0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba
 bash.url https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
+binutils.sha256 ce2017e059d63e67ddb9240e9d4ec49c2893605035cd60e92ad53177f4377237
+binutils.url https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
 bison.sha256 9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2
 bison.url https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.xz
 bzip2.sha256 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
@@ -15,8 +17,12 @@ flex.sha256 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995
 flex.url https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
+gcc.sha256 e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da
+gcc.url https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
 glibc.sha256 fb82998998b2b29965467bc1b69d152e9c307d2cf301c9eafb4555b770ef3fd2
 glibc.url https://ftp.gnu.org/gnu/glibc/glibc-2.38.tar.xz
+gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+gmp.url https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz
 grep.sha256 1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab
 grep.url https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz
 gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
@@ -27,6 +33,10 @@ m4.sha256 e236ea3a1ccf5f6c270b1c4bb60726f371fa49459a8eaaebc90b216b328daf2b
 m4.url https://ftp.gnu.org/gnu/m4/m4-1.4.20.tar.xz
 make.sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
 make.url https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
+mpc.sha256 ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8
+mpc.url https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz
+mpfr.sha256 277807353a6726978996945af13e52829e3abd7a9a5b7fb2793894e18f1fcbb2
+mpfr.url https://www.mpfr.org/mpfr-4.2.1/mpfr-4.2.1.tar.xz
 ncurses.sha256 136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
 ncurses.url https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz
 openssl.sha256 002a2d6b30b58bf4bea46c43bdd96365aaf8daa6c428782aa4feee06da197df3

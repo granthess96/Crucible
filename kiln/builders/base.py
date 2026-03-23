@@ -77,8 +77,8 @@ class BuildDef(KilnComponent):
     """
 
     source:         ClassVar[dict]      = {}
-    c_flags:        ClassVar[list[str]] = []
-    cxx_flags:      ClassVar[list[str]] = []
+    c_flags:        ClassVar[list[str]] = ['-fPIC', '-DPIC']
+    cxx_flags:      ClassVar[list[str]] = ['-fPIC', '-DPIC']
     link_flags:     ClassVar[list[str]] = []
     configure_args: ClassVar[list[str]] = []
 

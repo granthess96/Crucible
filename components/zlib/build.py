@@ -13,5 +13,3 @@ class Zlib(CMakeBuild):
     configure_args = [
         '-DCMAKE_INSTALL_PREFIX=/usr',
     ]
-
-    c_flags = ["-fPIC", "-O2"]
