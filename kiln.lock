@@ -27,6 +27,8 @@ grep.sha256 1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab
 grep.url https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz
 gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
 gzip.url https://ftp.gnu.org/gnu/gzip/gzip-1.13.tar.xz
+libxcrypt.sha256 e5e1f4caee0a01de2aee26e3138807d6d3ca2b8e67287966d1fefd65e1fd8943
+libxcrypt.url https://github.com/besser82/libxcrypt/releases/download/v4.4.36/libxcrypt-4.4.36.tar.xz
 linux-headers.sha256 b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb
 linux-headers.url https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz
 m4.sha256 e236ea3a1ccf5f6c270b1c4bb60726f371fa49459a8eaaebc90b216b328daf2b
