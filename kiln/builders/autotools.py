@@ -25,13 +25,24 @@ class AutotoolsBuild(BuildDef):
     def configure_command(self, paths: BuildPaths) -> list[str]:
         cflags   = " ".join(['--sysroot={sysroot}'] + self.c_flags).strip()
         cxxflags = " ".join(['--sysroot={sysroot}'] + self.cxx_flags).strip()
-        ldflags  = " ".join(['--sysroot={sysroot}'] + self.link_flags).strip()
+        ldflags  = " ".join([
+            '--sysroot={sysroot}',
+            '-L{sysroot}/lib64',
+            '-L{sysroot}/usr/lib64',
+        ] + self.link_flags).strip()
 
         cflags   = self._resolve([cflags], paths)[0]
         cxxflags = self._resolve([cxxflags], paths)[0]
         ldflags  = self._resolve([ldflags], paths)[0]
 
+        cc = self._resolve(
+            [f'gcc --sysroot={{sysroot}} -isystem{{sysroot}}/usr/include'],
+            paths
+        )[0]
+
         cmd = [f"{paths.source}/{self.configure_exe}", "--prefix=/usr", "--disable-nls"]
+
+        cmd.append(f"CC={cc}")
 
         if cflags:
             cmd.append(f"CFLAGS={cflags}")
@@ -40,7 +51,7 @@ class AutotoolsBuild(BuildDef):
         if ldflags:
             cmd.append(f"LDFLAGS={ldflags}")
 
-        return cmd + self._resolve(self.configure_args, paths)  
+        return cmd + self._resolve(self.configure_args, paths)
 
     def build_command(self, paths: BuildPaths) -> list[str]:
         return ["make", f"-j{os.cpu_count() or 4}"]

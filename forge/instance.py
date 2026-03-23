@@ -28,7 +28,8 @@ Usage:
 
 from __future__ import annotations
 
-import os
+
+import shlex
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,9 @@ import tempfile
 from pathlib import Path
 from unittest import result
 
+from click import command
+
+from components.python3.__source__.Lib import shlex
 from crucible.config import CrucibleConfig
 
 INSTANCES_DIR  = Path.home() / ".kiln" / "instances"
@@ -107,8 +111,16 @@ class ForgeInstance:
         """
         target_dir = self._chroot_path(cwd or self.config.build_root)
         if command:
-            import shlex
-            cmd_str    = ' '.join(shlex.quote(str(c)) for c in command)
+            cmd_parts = []
+            for c in command:
+                s = str(c)
+                if '=' in s and not s.startswith('-'):
+                    key, val = s.split('=', 1)
+                    cmd_parts.append(f"{key}={shlex.quote(val)}")
+                else:
+                    cmd_parts.append(shlex.quote(s))
+            cmd_str = ' '.join(cmd_parts)
+            
             chroot_cmd = [
                 'chroot', str(self.merged),
                 '/bin/bash', '-c', f'cd {target_dir} && {cmd_str}'

@@ -7,11 +7,19 @@
 #base_image = "vault:blake3:bcea4985f2cd2feb109fc277fa5e76b99b805cdf90e78cf8ddc0150d113a3bc0"
 
 # the -DNF based boostrap image
-base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+#base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
 
 # test image - bootstrapping
 #base_image = "vault:blake3:85844726316f86dfa4c86238442b9363cd938bf5a1af3c52c013cfb935e3c889"
 #base_image = "vault:blake3:7671edbb14e16fb994bae7069c50a3f1ae09edb480ba082676419b87a51dfef9"
+#base_image = "vault:blake3:2a7c41737d0366fdff7b1293b2b0015295c146d2fd35496efcb78c795fb76984"
+#base_image = "vault:blake3:1eec9269a86151a4d7e0378cca76f2f6ee30554691e33a0221655d26d725b643"
+#base_image = "vault:blake3:72e56e66d2da42eab98b9814da094f6b4215ffb039d3f70d0d1bb3715ca52f35"
+base_image = "vault:blake3:025bd45072640727d71685b2c2f8366f9e97fcdb72c88b8c6eec1c9fcea26d43"
+
+
+
+
 
 
 toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"

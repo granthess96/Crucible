@@ -702,7 +702,6 @@ def _forge_run(config, target: str, cmd: list[str],
     Returns True on success.
     """
     
-    print(f"DEBUG command cmd: {' '.join(cmd)}")
     reporter.update(target, status)
     effective_cwd = cwd or config.components_dir / target
 

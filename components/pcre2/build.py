@@ -5,8 +5,7 @@ class PCRE2(CMakeBuild):
     version = '10.47'
     deps    = ['glibc', 'linux-headers', 'zlib']
     source  = {
-        'git': 'https://github.com/PCRE2Project/pcre2',
-        'ref': 'pcre2-10.47',
+        'url': 'https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz',
     }
     configure_args = [
         '-DCMAKE_INSTALL_PREFIX=/usr',
