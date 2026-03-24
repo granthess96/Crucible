@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from kiln.builders.base import BuildDef, AssemblyDef, KilnComponent
+from kiln.builders.base import BuildDef, KilnComponent
 from kiln.manifest import Manifest, hash_file, hash_directory_tree
 from kiln.registry import ComponentRegistry, RegistryError
 
@@ -378,7 +378,8 @@ class Resolver:
 
     def _build_node(self, name: str, dep_names: list[str]) -> ComponentNode:
         instance = self._registry.instantiate(name)
-        is_build = self._registry.is_build_def(name)
+        #is_build = self._registry.is_build_def(name)
+        is_build = True # all components are now BuildDefs, AssemblyDef is deprecated
 
         dep_nodes = [self._resolved[d] for d in dep_names]
 

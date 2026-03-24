@@ -18,11 +18,12 @@ Files with role 'exclude' are silently dropped from the tarball.
 
 Output
 ------
-  <target>.tar.zst    -- all non-excluded files, single tarball
-  <target>.manifest.txt
+  <target>.tar.zst          -- all non-excluded files, flat tarball
+  <target>.files.json.zst   -- compressed path→role index (for cast)
+  <target>.manifest.txt     -- build identity / manifest hash
 
-The image projector is responsible for cherry-picking by role from the
-tarball; role metadata is recorded in the manifest, not the tarball layout.
+cast fetches the files index first (small), decides which roles it needs,
+then fetches the tarball and extracts only the relevant paths.
 """
 from __future__ import annotations
 import json
@@ -150,10 +151,11 @@ def _resolve_role(rel: PurePosixPath, spec_overrides: list) -> Role:
 def verb_package(target: str, config, cache: TieredCache,
                  reporter: Reporter, push: bool) -> bool:
     """
-    Assign roles to __install__/ files, pack into a single tarball, cache.
+    Assign roles to __install__/ files, pack into cache artifact.
 
-    runtime.tar.zst  →  <target>.tar.zst   (all non-excluded files)
-    manifest.txt     →  <target>.manifest.txt
+      <target>.tar.zst         -- all non-excluded files, flat
+      <target>.files.json.zst  -- compressed path→role index
+      <target>.manifest.txt    -- build identity / manifest hash
     """
     if not check_sentinel(config, target, "configured", "configure"):
         return False
@@ -251,7 +253,8 @@ def verb_package(target: str, config, cache: TieredCache,
     with tempfile.TemporaryDirectory(prefix="kiln-package-") as tmp:
         tmp_path = Path(tmp)
 
-        tarball       = tmp_path / f"{target}.tar.zst"
+        tarball      = tmp_path / f"{target}.tar.zst"
+        files_index  = tmp_path / f"{target}.files.json.zst"
         manifest_file = tmp_path / f"{target}.manifest.txt"
 
         filelist = tmp_path / "filelist.txt"
@@ -271,14 +274,34 @@ def verb_package(target: str, config, cache: TieredCache,
             reporter.update(target, Status.ERROR)
             return False
 
+        # --- Write compressed file index ---
+        # cast fetches this first to decide which roles it needs, then
+        # selectively extracts from the tarball.
+        index_data = {
+            "component":     target,
+            "version":       instance.version,
+            "manifest_hash": manifest_hash,
+            "files": {
+                str(f.relative_to(install_dir)): _resolve_role(
+                    PurePosixPath(f.relative_to(install_dir)), spec_overrides
+                )
+                for f in sorted(to_pack)
+            },
+        }
+        index_json = json.dumps(index_data, indent=None, separators=(',', ':')).encode()
+        result = subprocess.run(
+            ["zstd", "-q", "-o", str(files_index)],
+            input=index_json,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            print(f"ERROR: zstd (files index) failed: {result.stderr.decode().strip()}",
+                  file=sys.stderr)
+            reporter.update(target, Status.ERROR)
+            return False
+
         manifest_data = instance.manifest_fields()
         manifest_data["manifest_hash"] = manifest_hash
-        manifest_data["file_roles"]    = {
-            str(f.relative_to(install_dir)): _resolve_role(
-                PurePosixPath(f.relative_to(install_dir)), spec_overrides
-            )
-            for f in sorted(to_pack)
-        }
         manifest_file.write_text(
             json.dumps(manifest_data, indent=2) + "\n",
             encoding="utf-8",

@@ -200,7 +200,7 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
              reporter: Reporter, push: bool, dry_run: bool) -> bool:
     from kiln.verbs.source    import verb_fetch, verb_checkout
     from kiln.verbs.build     import verb_configure, verb_build, verb_test, verb_install
-    from kiln.verbs.packaging import verb_package, verb_assemble
+    from kiln.verbs.packaging import verb_package
     from kiln.verbs.workspace import verb_clean, verb_purge, verb_clear_cache
 
     if verb == "deps":
@@ -219,8 +219,6 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
         return verb_install(target, config, reporter)
     elif verb == "package":
         return verb_package(target, config, cache, reporter, push)
-    elif verb == "assemble":
-        return verb_assemble(target, config, cache, reporter, push)
     elif verb == "clean":
         return verb_clean(target, config, reporter)
     elif verb == "purge":

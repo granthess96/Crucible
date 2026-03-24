@@ -14,10 +14,10 @@ from kiln.cache import TieredCache, CacheMiss, CacheError, CofferUnavailable
 from kiln.backends import make_resolver
 from kiln.dag import ResolvedDAG, ResolveError
 
-
 # ---------------------------------------------------------------------------
 # Internal helper
 # ---------------------------------------------------------------------------
+
 def _populate_sysroot(
     target:      str,
     instance,
@@ -26,8 +26,13 @@ def _populate_sysroot(
     sysroot_dir: Path,
 ) -> bool:
     """
-    Unpack buildtime artifacts for all deps into sysroot_dir.
-    Re-runs the resolver to get manifest hashes -- fast, correct, no state
+    Unpack all dep artifacts into sysroot_dir.
+
+    Extracts the full <n>.tar.zst for each dep — the sysroot gets
+    everything so the compiler can find headers, shared libs, and
+    static libs without any role filtering at this stage.
+
+    Re-runs the resolver to get manifest hashes — fast, correct, no state
     file needed. Returns True on success, False with error printed on failure.
     """
     if not instance.deps:
@@ -35,7 +40,6 @@ def _populate_sysroot(
 
     resolver = make_resolver(config, cache)
     result   = resolver.resolve(target)
-
     if isinstance(result, ResolveError):
         print(f"ERROR: dep resolution failed: {result.message}", file=sys.stderr)
         return False
@@ -77,30 +81,28 @@ def _populate_sysroot(
                       file=sys.stderr)
                 return False
 
-            buildtime_tarball = tmp_path / f"{node.name}.buildtime.tar.zst"
-            if not buildtime_tarball.exists():
+            tarball = tmp_path / f"{node.name}.tar.zst"
+            if not tarball.exists():
                 print(
-                    f"ERROR: dep {node.name} has no buildtime.tar.zst in cache.\n"
+                    f"ERROR: dep {node.name} has no tarball in cache.\n"
                     f"       Was it built with 'kiln package'?",
                     file=sys.stderr,
                 )
                 return False
 
-            # Try native zstd first, fall back to tar auto-detection
             unpack = subprocess.run(
-                ["tar", "--use-compress-program=zstd", "-xf",
-                 str(buildtime_tarball), "-C", str(sysroot_dir)],
+                [
+                    "tar", 
+                    "--use-compress-program=zstd", 
+                    "--keep-directory-symlink",
+                    "-xf",
+                     str(tarball), "-C", str(sysroot_dir)
+                ],
                 stderr=subprocess.PIPE,
             )
             if unpack.returncode != 0:
-                unpack = subprocess.run(
-                    ["tar", "-xf", str(buildtime_tarball), "-C",
-                     str(sysroot_dir)],
-                    stderr=subprocess.PIPE,
-                )
-            if unpack.returncode != 0:
                 print(
-                    f"ERROR: failed to unpack {node.name} buildtime artifact:\n"
+                    f"ERROR: failed to unpack {node.name} into sysroot:\n"
                     f"       {unpack.stderr.decode().strip()}",
                     file=sys.stderr,
                 )
@@ -110,10 +112,10 @@ def _populate_sysroot(
 
     return True
 
-
 # ---------------------------------------------------------------------------
 # verb_fetch
 # ---------------------------------------------------------------------------
+
 def verb_fetch(target: str, config, reporter: Reporter) -> bool:
     """
     Fetch source into local cache and lock source identity.
@@ -133,11 +135,6 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
 
     if target not in reg:
         print(f"ERROR: component '{target}' not found in components/",
-              file=sys.stderr)
-        return False
-
-    if not reg.is_build_def(target):
-        print(f"ERROR: '{target}' is an AssemblyDef -- no source to fetch",
               file=sys.stderr)
         return False
 
@@ -197,10 +194,35 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
               file=sys.stderr)
         return False
 
-
 # ---------------------------------------------------------------------------
 # verb_checkout
 # ---------------------------------------------------------------------------
+
+def _setup_usr_merge(root_dir: Path) -> None:
+    """
+    Force the UsrMerge layout on a directory before it is populated.
+    Uses relative symlinks to ensure portability.
+    """
+    # 1. Create the targets first (the real directories)
+    (root_dir / "usr/bin").mkdir(parents=True, exist_ok=True)
+    (root_dir / "usr/lib").mkdir(parents=True, exist_ok=True)
+    (root_dir / "usr/lib64").mkdir(parents=True, exist_ok=True)
+
+    # 2. Map the legacy roots to the new usr locations
+    # Note: Using relative targets (no leading slash) is vital for sysroots
+    links = {
+        "bin": "usr/bin",
+        "sbin": "usr/bin",
+        "lib": "usr/lib",
+        "lib64": "usr/lib64"
+    }
+
+    for link_name, target in links.items():
+        link_path = root_dir / link_name
+        if not link_path.exists():
+            # Creates: root_dir/bin -> usr/bin
+            link_path.symlink_to(target)
+
 def verb_checkout(target: str, config, cache: TieredCache,
                   reporter: Reporter) -> bool:
     """
@@ -211,7 +233,7 @@ def verb_checkout(target: str, config, cache: TieredCache,
          - git:     git archive from bare clone at locked SHA
          - tarball: tar extract from cached tarball, strip leading directory
       4. Apply patches in lexicographic order
-      5. Unpack dep buildtime artifacts into __sysroot__/
+      5. Unpack all dep artifacts into __sysroot__/
       6. Create empty __build__/ and __install__/
       7. Write checked_out sentinel
     Destructive -- always starts from a clean slate. No prompts.
@@ -231,11 +253,6 @@ def verb_checkout(target: str, config, cache: TieredCache,
 
     if target not in reg:
         print(f"ERROR: component '{target}' not found in components/",
-              file=sys.stderr)
-        return False
-
-    if not reg.is_build_def(target):
-        print(f"ERROR: '{target}' is an AssemblyDef -- no source to check out",
               file=sys.stderr)
         return False
 
@@ -274,7 +291,6 @@ def verb_checkout(target: str, config, cache: TieredCache,
         return False
 
     source_id = id_file.read_text(encoding="utf-8").strip()
-
     reporter.update(target, Status.FETCH)
 
     # --- Wipe all managed directories -- clean slate ---
@@ -376,8 +392,9 @@ def verb_checkout(target: str, config, cache: TieredCache,
                     return False
                 print(f"  {target}: applied {patch_file.name}")
 
-    # --- Populate __sysroot__/ from dep buildtime artifacts ---
+    # --- Populate __sysroot__/ from dep artifacts ---
     sysroot_dir.mkdir()
+    _setup_usr_merge(sysroot_dir)  # Ensure /usr merge prior to populating
     if not _populate_sysroot(target, instance, config, cache, sysroot_dir):
         reporter.update(target, Status.ERROR)
         return False
@@ -385,6 +402,7 @@ def verb_checkout(target: str, config, cache: TieredCache,
     # --- Create empty __build__/ and __install__/ ---
     build_dir.mkdir()
     install_dir.mkdir()
+    _setup_usr_merge(install_dir)  # Prepare install directory for /usr merge
 
     # --- Write checked_out sentinel ---
     state_dir.mkdir(parents=True, exist_ok=True)

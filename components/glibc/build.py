@@ -43,18 +43,18 @@ class GlibcBuild(AutotoolsBuild):
     #                     listed in both so a buildtime-only sysroot works too.
     # -------------------------------------------------------------------------
 
-    runtime_globs = AutotoolsBuild.runtime_globs + [
-        "usr/libexec/**",
-        "usr/lib/**/gconv/**",
-        "var/**",
-        "lib64/**",
-        "sbin/**",
-        "usr/libexec/**",
-        "usr/lib/***/gconv/**",
-        "usr/lib64/gconv/**",
-    ]
+#    runtime_globs = AutotoolsBuild.runtime_globs + [
+#        "usr/libexec/**",
+#        "usr/lib/**/gconv/**",
+#        "var/**",
+#        "lib64/**",
+#        "sbin/**",
+#        "usr/libexec/**",
+#        "usr/lib/***/gconv/**",
+#        "usr/lib64/gconv/**",
+#    ]
 
-    buildtime_globs = AutotoolsBuild.buildtime_globs + [
-        "usr/lib/**/*.o",
-        "usr/lib/**/gconv/**",
-    ]
+#    buildtime_globs = AutotoolsBuild.buildtime_globs + [
+#        "usr/lib/**/*.o",
+#        "usr/lib/**/gconv/**",
+# ]

@@ -58,7 +58,7 @@ def make_resolver(config, cache: TieredCache) -> Resolver:
     """
     Build a Resolver from config and cache.
     Centralises the repeated five-argument setup that was duplicated across
-    verb_deps, _populate_sysroot, verb_package, and verb_assemble.
+    verb_deps, _populate_sysroot, and verb_package
     """
     lock = KilnLock(config.lock_file)
     return Resolver(
