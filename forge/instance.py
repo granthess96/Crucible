@@ -218,30 +218,7 @@ class ForgeInstance:
         workspace = self._merged / WORKSPACE_PATH.lstrip('/')
         _run(['mount', '--bind', str(self.component_path), str(workspace)], self.verbose)
         self._mounted.append((workspace, 'kernel'))
-        
-        # 8. Mount proc and sys — required for correct tool behavior
-        _run(['mount', '-t', 'proc', 'proc', str(self._merged / 'proc')], self.verbose)
-        self._mounted.append((self._merged / 'proc', 'kernel'))
-
-        _run(['mount', '-t', 'sysfs', 'sysfs', str(self._merged / 'sys')], self.verbose)
-        self._mounted.append((self._merged / 'sys', 'kernel'))
-        
-        # 9. devpts for proper TTY support
-        dev_pts = self._merged / 'dev' / 'pts'
-        dev_pts.mkdir(exist_ok=True)
-
-        _run(['mount', '-t', 'devpts', 'devpts', str(dev_pts)], self.verbose)
-        self._mounted.append((dev_pts, 'kernel'))
-        
-        # ptmx symlink (some systems expect it)
-        ptmx = self._merged / 'dev' / 'ptmx'
-        if not ptmx.exists():
-            ptmx.symlink_to('pts/ptmx')
-            
-        tmp_dir = self._merged / 'tmp'
-        _run(['mount', '-t', 'tmpfs', 'tmpfs', str(tmp_dir)], self.verbose)
-        self._mounted.append((tmp_dir, 'kernel'))            
-
+                   
     def _teardown(self):
     # Kill any processes still using the chroot before attempting umounts
         if self._merged and self._merged.exists():
