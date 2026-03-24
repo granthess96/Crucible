@@ -28,16 +28,13 @@ Usage:
 
 from __future__ import annotations
 
-
-import importlib
+import os
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from unittest import result
-
-from click import command
 
 import shlex
 from crucible.config import CrucibleConfig
@@ -134,7 +131,13 @@ class ForgeInstance:
         if self.verbose:
             print(f"+ {' '.join(chroot_cmd)}")
 
-        result = subprocess.run(chroot_cmd, check=False)
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": WORKSPACE_PATH,
+            "TERM": os.environ.get("TERM", "xterm"),
+        }
+
+        result = subprocess.run(chroot_cmd, check=False, env=env)
         return result.returncode
 
     def run_checked(self, command: list[str], cwd: Path | None = None):
@@ -215,16 +218,40 @@ class ForgeInstance:
         workspace = self._merged / WORKSPACE_PATH.lstrip('/')
         _run(['mount', '--bind', str(self.component_path), str(workspace)], self.verbose)
         self._mounted.append((workspace, 'kernel'))
+        
+        # 8. Mount proc and sys — required for correct tool behavior
+        _run(['mount', '-t', 'proc', 'proc', str(self._merged / 'proc')], self.verbose)
+        self._mounted.append((self._merged / 'proc', 'kernel'))
+
+        _run(['mount', '-t', 'sysfs', 'sysfs', str(self._merged / 'sys')], self.verbose)
+        self._mounted.append((self._merged / 'sys', 'kernel'))
+        
+        # 9. devpts for proper TTY support
+        dev_pts = self._merged / 'dev' / 'pts'
+        dev_pts.mkdir(exist_ok=True)
+
+        _run(['mount', '-t', 'devpts', 'devpts', str(dev_pts)], self.verbose)
+        self._mounted.append((dev_pts, 'kernel'))
+        
+        # ptmx symlink (some systems expect it)
+        ptmx = self._merged / 'dev' / 'ptmx'
+        if not ptmx.exists():
+            ptmx.symlink_to('pts/ptmx')
+            
+        tmp_dir = self._merged / 'tmp'
+        _run(['mount', '-t', 'tmpfs', 'tmpfs', str(tmp_dir)], self.verbose)
+        self._mounted.append((tmp_dir, 'kernel'))            
 
     def _teardown(self):
-        # Kill any processes still using the chroot before attempting umounts
+    # Kill any processes still using the chroot before attempting umounts
         if self._merged and self._merged.exists():
             subprocess.run(
                 ['fuser', '-km', str(self._merged)],
                 check=False,
                 capture_output=not self.verbose,
             )
-        
+
+        # Unmount in reverse order
         for mount_point, kind in reversed(self._mounted):
             if kind == 'fuse':
                 result = subprocess.run(
@@ -250,21 +277,39 @@ class ForgeInstance:
                         f"{result.stderr.decode().strip()}",
                         file=sys.stderr,
                     )
-        # Only remove instance dir after verifying no mounts remain
+
+        # ------------------------------------------------------------------
+        # SAFE CLEANUP: only remove instance dir if NO mounts remain
+        # ------------------------------------------------------------------
         if self._instance_dir and self._instance_dir.exists():
             remaining = subprocess.run(
-            ['findmnt', '--json', '--submounts', str(self._instance_dir)],
-            capture_output=True,
-        )
-            if remaining.returncode != 0:
-                # No mounts found — safe to remove
-                shutil.rmtree(self._instance_dir, ignore_errors=True)
-        else:
-            print(
-                f"WARNING: mounts still active under {self._instance_dir}, "
-                f"skipping cleanup to avoid data loss.",
-                file=sys.stderr,
+                ['findmnt', '--json', '--submounts', str(self._instance_dir)],
+                capture_output=True,
+                text=True,
             )
+
+            safe_to_delete = False
+
+            if remaining.returncode == 0:
+                try:
+                    data = json.loads(remaining.stdout)
+                    mounts = data.get("filesystems", [])
+
+                    # ONLY safe if explicitly empty
+                    if not mounts:
+                        safe_to_delete = True
+                except json.JSONDecodeError:
+                    # Parsing failed → treat as unsafe
+                    pass
+
+            # If we are absolutely certain no mounts remain → delete
+            if safe_to_delete:
+                shutil.rmtree(self._instance_dir, ignore_errors=True)
+            else:
+                print(
+                    f"WARNING: skipping cleanup of {self._instance_dir} — mounts may still be active",
+                    file=sys.stderr,
+                )
             
     def _chroot_path(self, host_path: Path) -> str:
         try:
