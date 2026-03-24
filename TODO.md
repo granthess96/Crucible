@@ -209,3 +209,92 @@ Removed as obsolete or wrong direction:
 
 Sequencing note: `verb_assemble` must be working before `--publish` flag
 and full Vault promotion API are worth implementing.
+
+### 2026-03-23 -- Refactor / Redesign conversation with Claude AI
+Here's the full list, grouped by layer:
+
+Dep — structured dependency model
+Replace deps: ClassVar[list[str]] with a Dep dataclass:
+python@dataclass
+class Dep:
+    name:    str
+    mode:    Literal["build", "runtime", "both"] = "both"
+    version: str = ""      # semver constraint, "" = any
+    order:   int = 100     # lower = unpacked first in assembly
+
+mode="build" — goes into __sysroot__/ only, never into images
+mode="runtime" — goes into images only, not into __sysroot__/
+mode="both" — goes everywhere (glibc's ld-linux case)
+order=0 on filesystem replaces the unpack_order special case
+Flat string deps migrate via a compatibility shim so existing build.py files keep working
+
+
+InstallFile — explicit packaging manifests
+Replace glob classification in verb_package with per-component declarations:
+python@dataclass
+class InstallFile:
+    pattern: str           # relative to __install__/, globs ok
+    mode:    DepMode       # "build", "runtime", "both"
+
+Builder subclasses (AutotoolsBuild, CMakeBuild) provide sensible defaults
+Problem components like glibc override install_manifest() explicitly
+Unclassified files become a hard error, not a warning
+mode="both" means the file appears in both tarballs — solves the ld-linux problem cleanly
+Glob fallback stays on BuildDef base class for unmitigated components
+
+
+__sysroot__ population — unpack everything
+_populate_sysroot currently unpacks only buildtime artifacts. Change it to unpack both runtime and buildtime tarballs for all deps. Rationale:
+
+The sysroot is a simulated target root, not just a compilation aid
+configure test programs need to execute against real runtime libs
+With Dep.mode filtering, build-only deps (gcc, cmake) don't bloat the sysroot — only mode="both" and mode="runtime" deps get unpacked
+
+
+skip_verbs on BuildDef
+pythonskip_verbs: ClassVar[set[str]] = set()
+Opt-out rather than opt-in — new verbs run by default, components declare exceptions. Dispatch checks before calling into forge:
+pythonif verb in getattr(instance, 'skip_verbs', set()):
+    reporter.update(target, Status.SKIPPED)
+    return True
+
+AssemblyDef layer infrastructure
+Move shared unpack logic up from ImageDef into AssemblyDef:
+pythondef _ordered_inputs(self, artifact_inputs) -> list[tuple[str, Path]]:
+    # sort by Dep.order from self.deps declaration
+
+def _unpack_artifacts(self, artifact_inputs, rootfs: Path) -> None:
+    # the unpack loop, called by both ImageDef and OCILayerDef
+```
+
+`ImageDef.assemble_command` and future `OCILayerDef.assemble_command` both call `_unpack_artifacts` then diverge for format-specific output.
+
+---
+
+## `ContainerDef` hierarchy
+```
+AssemblyDef
+├── ImageDef          # squashfs — done
+└── ContainerDef
+    ├── OCILayerDef   # single layer tarball + descriptor
+    └── OCIImageDef   # manifest pointing at ordered layer deps
+OCIImageDef is the composed image case — its deps are other OCILayerDef outputs, it doesn't unpack files, it assembles references. OCILayerDef uses _unpack_artifacts identically to ImageDef.
+
+BuildPaths.for_component — fix the dropped name
+The name parameter is accepted and silently ignored. Either use it (f"{workspace}/components/{name}") or remove it. Either way, make it intentional.
+
+BuildDef — mutable ClassVar defaults
+deps, c_flags, cxx_flags, link_flags, configure_args, build_env are all mutable lists/dicts as ClassVar defaults. Subclasses that don't override share the same object. Fix via __init_subclass__ or explicit per-subclass defaults.
+
+manifest_fields — provenance not bits
+Two fixes falling out of the provenance hash design:
+
+source_pin should record the locked commit/sha256 from the lock file, not the fetch URL
+"build_env": {"sysroot_isolation": True} is hardcoded and meaningless — remove or derive from actual config
+
+
+_resolve / _resolve_env — shared context
+Factor out _make_context(paths) so both methods build the substitution dict in one place.
+
+base.py glob issues — deferred until InstallFile lands
+The overlapping .so entries, the wrong var/lib/**/*.la paths, and the blanket lib64/** catch-all are all symptoms of the glob model being wrong. They get fixed as part of the InstallFile migration rather than patched in place.

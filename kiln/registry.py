@@ -1,6 +1,5 @@
 """
 kiln/registry.py
-
 Filesystem-based component discovery and build.py loader.
 
 Discovery rule:
@@ -12,22 +11,18 @@ The registry lazily loads component build.py files on demand — a component
 is discovered by scanning the components/ directory but not imported until
 it is actually needed by the current build target's transitive dep tree.
 """
-
 from __future__ import annotations
-
 import importlib.util
 import inspect
 import sys
 from pathlib import Path
 from typing import Type
 
-from kiln.builders.base import KilnComponent, BuildDef, AssemblyDef
-
+from kiln.builders.base import KilnComponent, BuildDef
 
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
-
 class RegistryError(Exception):
     """Raised when a build.py cannot be loaded or is malformed."""
     def __init__(self, component_dir: Path, reason: str):
@@ -35,18 +30,16 @@ class RegistryError(Exception):
         self.reason = reason
         super().__init__(f"{component_dir.name}: {reason}")
 
-
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
-
 class ComponentRegistry:
     """
     Immutable map of component name → KilnComponent subclass.
+
     Components are discovered eagerly by scanning the components/ directory
     but loaded lazily on first access.
     """
-
     def __init__(self, components_root: Path):
         self._root = components_root
         self._classes: dict[str, Type[KilnComponent]] = {}
@@ -59,7 +52,6 @@ class ComponentRegistry:
         """Discover available components without loading them."""
         if not self._root.is_dir():
             raise RegistryError(self._root, "components/ directory not found")
-
         for entry in sorted(self._root.iterdir()):
             if not entry.is_dir():
                 continue
@@ -82,14 +74,11 @@ class ComponentRegistry:
     def _load_one(self, component_dir: Path, build_py: Path) -> None:
         name = component_dir.name
         module_name = f"_kiln_component_{name}"
-
         spec = importlib.util.spec_from_file_location(module_name, build_py)
         if spec is None or spec.loader is None:
             raise RegistryError(component_dir, "could not create module spec")
-
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-
         try:
             spec.loader.exec_module(module)
         except Exception as exc:
@@ -109,7 +98,6 @@ class ComponentRegistry:
                 and not inspect.isabstract(obj)
             )
         ]
-
         if len(candidates) == 0:
             raise RegistryError(
                 component_dir,
@@ -122,7 +110,6 @@ class ComponentRegistry:
                 f"build.py contains multiple KilnComponent subclasses: {names}. "
                 f"Only one is permitted per build.py."
             )
-
         cls = candidates[0]
 
         # Validate: class name attribute must match directory name
@@ -135,7 +122,6 @@ class ComponentRegistry:
 
         # Detect patches directory
         patches_dir = component_dir / "patches"
-
         self._classes[name]        = cls
         self._build_py_paths[name] = build_py
         self._patches_dirs[name]   = patches_dir if patches_dir.is_dir() else None
@@ -170,11 +156,3 @@ class ComponentRegistry:
 
     def all_names(self) -> list[str]:
         return sorted(self._discovered.keys())
-
-    def is_build_def(self, name: str) -> bool:
-        self._ensure_loaded(name)
-        return issubclass(self._classes[name], BuildDef)
-
-    def is_assembly_def(self, name: str) -> bool:
-        self._ensure_loaded(name)
-        return issubclass(self._classes[name], AssemblyDef)

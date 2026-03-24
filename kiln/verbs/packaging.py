@@ -1,8 +1,28 @@
 """
 kiln/verbs/packaging.py
-Packaging verbs: package and assemble.
-package  -- split __install__/ into runtime + buildtime tarballs, cache
-assemble -- compose cached runtime artifacts into image or container
+Packaging verb: package.
+
+package -- assign roles to __install__/ files via path inference + FileSpec
+           overrides, write manifest, store single tarball in cache.
+
+Role assignment
+---------------
+Every file under __install__/ receives a Role via path_role() below.
+The component's `files` list (list[FileSpec]) contains overrides for the
+minority of paths where the heuristic would guess wrong.  FileSpec paths
+are matched as globs using PurePosixPath.full_match() against the
+install-relative path.  The first matching FileSpec wins; unmatched files
+fall through to path_role().
+
+Files with role 'exclude' are silently dropped from the tarball.
+
+Output
+------
+  <target>.tar.zst    -- all non-excluded files, single tarball
+  <target>.manifest.txt
+
+The image projector is responsible for cherry-picking by role from the
+tarball; role metadata is recorded in the manifest, not the tarball layout.
 """
 from __future__ import annotations
 import json
@@ -10,23 +30,130 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
 from kiln.output import Reporter, Status
 from kiln.cache import TieredCache, CacheMiss, CacheError, CofferUnavailable
 from kiln.dag import KilnLock, ResolvedDAG, ResolveError
 from kiln.executor import get_builder, check_sentinel
 from kiln.backends import make_resolver
+from kiln.spec import Role
 
+# ---------------------------------------------------------------------------
+# Path inference
+# ---------------------------------------------------------------------------
+
+def path_role(rel: PurePosixPath) -> Role:
+    """
+    Infer a Role from an install-relative path.
+
+    Covers the common FHS layouts produced by autotools / cmake / meson.
+    FileSpec entries on the component override this for exceptions.
+    """
+    parts = rel.parts
+    if not parts:
+        return 'runtime'
+
+    top = parts[0]
+    name = rel.name
+    suffix = rel.suffix          # last extension, e.g. '.so', '.h', '.a'
+    suffixes = rel.suffixes      # all extensions, e.g. ['.so', '.6', '.0']
+
+    # ---- dev ---------------------------------------------------------------
+    # Headers
+    if top in ('usr',) and len(parts) > 1 and parts[1] == 'include':
+        return 'dev'
+    if top == 'include':
+        return 'dev'
+
+    # Static libs and object files (crt*.o, etc.)
+    if suffix in ('.a', '.o', '.lo'):
+        return 'dev'
+
+    # libtool archives
+    if suffix == '.la':
+        return 'dev'
+
+    # pkg-config / cmake / aclocal / autoconf data
+    if 'pkgconfig' in parts:
+        return 'dev'
+    if 'cmake' in parts:
+        return 'dev'
+    if 'aclocal' in parts:
+        return 'dev'
+
+    # ---- debug -------------------------------------------------------------
+    # Must run before the .so suffix check: a .so inside a .debug/ dir is
+    # debug output, not a linker stub.
+    if '.debug' in parts:
+        return 'debug'
+    if 'debug' in parts and top in ('usr', 'lib', 'lib64'):
+        return 'debug'
+    if suffix == '.debug':
+        return 'debug'
+
+    # Unversioned .so symlinks (e.g. libfoo.so) — linker inputs, dev only.
+    # Versioned .so files (libfoo.so.6, libfoo.so.6.0.0) are runtime.
+    # Heuristic: exactly one suffix and it is '.so' → dev.
+    if suffixes and suffixes[-1] == '.so' and len(suffixes) == 1:
+        return 'dev'
+
+    # ---- doc ---------------------------------------------------------------
+    if top in ('usr',) and len(parts) > 1 and parts[1] in ('share',):
+        if len(parts) > 2 and parts[2] in ('man', 'info', 'doc', 'gtk-doc',
+                                            'devhelp'):
+            return 'doc'
+    if top in ('usr', 'share') and 'man' in parts:
+        return 'doc'
+    if top in ('usr', 'share') and 'info' in parts:
+        return 'doc'
+    if top == 'usr' and len(parts) > 1 and parts[1] == 'man':
+        return 'doc'
+
+    # ---- config ------------------------------------------------------------
+    if top == 'etc':
+        return 'config'
+    if top == 'usr' and len(parts) > 1 and parts[1] == 'etc':
+        return 'config'
+
+    # ---- tool --------------------------------------------------------------
+    # Build-time tools that shouldn't land in the target sysroot.
+    # Heuristic: anything under usr/share/locale gets 'runtime' (it's data),
+    # but binaries under the cross-compile host prefix are 'tool'.
+    # This is intentionally narrow — most usr/bin things are 'runtime'.
+    # Components that need finer control use FileSpec.
+
+    # ---- runtime (default) -------------------------------------------------
+    return 'runtime'
+
+
+# ---------------------------------------------------------------------------
+# FileSpec glob matching
+# ---------------------------------------------------------------------------
+
+def _resolve_role(rel: PurePosixPath, spec_overrides: list) -> Role:
+    """
+    Return the role for rel, applying FileSpec overrides before path_role().
+    First matching FileSpec wins.
+    """
+    rel_str = str(rel)
+    for spec in spec_overrides:
+        if rel.full_match(spec.path):
+            return spec.role
+    return path_role(rel)
+
+
+# ---------------------------------------------------------------------------
+# verb_package
+# ---------------------------------------------------------------------------
 
 def verb_package(target: str, config, cache: TieredCache,
                  reporter: Reporter, push: bool) -> bool:
     """
-    Split __install__/ into runtime and buildtime tarballs, write manifest,
-    store in local artifact cache. With --push, also upload to Coffer.
-    BuildDef components only -- use 'kiln assemble' for AssemblyDef.
-    runtime.tar.zst   -- .so libs, binaries, etc (runtime_globs)
-    buildtime.tar.zst -- headers, .a libs, pkgconfig (buildtime_globs)
-    manifest.txt      -- full canonical manifest fields
+    Assign roles to __install__/ files, pack into a single tarball, cache.
+
+    runtime.tar.zst  →  <target>.tar.zst   (all non-excluded files)
+    manifest.txt     →  <target>.manifest.txt
     """
     if not check_sentinel(config, target, "configured", "configure"):
         return False
@@ -35,17 +162,9 @@ def verb_package(target: str, config, cache: TieredCache,
     if instance is None:
         return False
 
-    # Type gate -- AssemblyDef components use 'kiln assemble' not 'kiln package'
-    if reg.is_assembly_def(target):
-        print(
-            f"ERROR: '{target}' is an AssemblyDef -- use 'kiln assemble' instead.\n"
-            f"       'kiln package' is only for BuildDef components.",
-            file=sys.stderr,
-        )
-        return False
-
     component_dir = config.components_dir / target
     install_dir   = component_dir / "__install__"
+
     if not install_dir.exists() or not any(install_dir.rglob("*")):
         print(
             f"ERROR: {target}: __install__/ is empty.\n"
@@ -54,7 +173,7 @@ def verb_package(target: str, config, cache: TieredCache,
         )
         return False
 
-    # Validate --push preconditions early -- fail before doing any work
+    # Validate --push preconditions early
     if push and cache._coffer is None:
         print(
             f"ERROR: --push requires coffer_host to be set in [cache] config.\n"
@@ -85,105 +204,81 @@ def verb_package(target: str, config, cache: TieredCache,
 
     manifest_hash = target_node.manifest_hash
 
-    # --- Collect files by glob pattern ---
-    def collect(globs: list[str]) -> list[Path]:
-        """
-        Match files (and symlinks) under install_dir against glob patterns.
-        Uses PurePosixPath.full_match() which handles ** correctly across path
-        separators.
-        """
-        matched = []
-        for f in sorted(install_dir.rglob("*")):
-            if not f.is_file() and not f.is_symlink():
-                continue
-            rel = f.relative_to(install_dir)
-            for pattern in globs:
-                if rel.full_match(pattern):
-                    matched.append(f)
-                    break
-        return matched
+    # --- Collect and classify all installed files ---
+    spec_overrides = getattr(instance, 'files', [])
 
-    all_installed   = sorted(
+    all_installed = sorted(
         f for f in install_dir.rglob("*")
         if f.is_file() or f.is_symlink()
     )
-    runtime_files   = collect(instance.runtime_globs)
-    buildtime_files = collect(instance.buildtime_globs)
 
-    # --- Unclassified file report -- nothing is ever silently dropped ---
-    runtime_set   = set(runtime_files)
-    buildtime_set = set(buildtime_files)
-    unclassified  = [
-        f for f in all_installed
-        if f not in runtime_set and f not in buildtime_set
-    ]
-    print(f"  {target}: {len(runtime_files)} runtime, "
-          f"{len(buildtime_files)} buildtime, "
-          f"{len(unclassified)} unclassified  "
-          f"({len(all_installed)} total installed files)")
-    if unclassified:
-        print(f"  {target}: UNCLASSIFIED (not captured in either tarball):")
-        for f in unclassified:
-            print(f"    unclassified: {f.relative_to(install_dir)}")
-
-    if not runtime_files and not buildtime_files:
+    if not all_installed:
         print(
-            f"ERROR: {target}: no files matched any glob pattern.\n"
-            f"       Check that 'kiln install' ran successfully and that\n"
-            f"       the install prefix matches runtime_globs/buildtime_globs.",
+            f"ERROR: {target}: no files found under __install__/.\n"
+            f"       Run 'kiln install' first.",
             file=sys.stderr,
         )
         reporter.update(target, Status.ERROR)
         return False
 
-    if not runtime_files:
-        print(f"  WARNING: {target}: no runtime files matched -- "
-              f"runtime tarball will be empty")
-    if not buildtime_files:
-        print(f"  WARNING: {target}: no buildtime files matched -- "
-              f"buildtime tarball will be empty")
+    # role → [Path]
+    by_role: dict[Role, list[Path]] = {}
+    for f in all_installed:
+        rel  = f.relative_to(install_dir)
+        role = _resolve_role(PurePosixPath(rel), spec_overrides)
+        by_role.setdefault(role, []).append(f)
 
-    # --- Pack into tarballs ---
+    excluded  = by_role.pop('exclude', [])
+    to_pack   = [f for files in by_role.values() for f in files]
+
+    # Summary
+    counts = {r: len(fs) for r, fs in sorted(by_role.items())}
+    count_str = ', '.join(f"{r}={n}" for r, n in counts.items())
+    print(f"  {target}: {len(to_pack)} files to pack "
+          f"({count_str}"
+          + (f", excluded={len(excluded)}" if excluded else "")
+          + f")  [{len(all_installed)} total installed]")
+
+    if not to_pack:
+        print(
+            f"ERROR: {target}: all files excluded or __install__/ empty.",
+            file=sys.stderr,
+        )
+        reporter.update(target, Status.ERROR)
+        return False
+
+    # --- Pack ---
     with tempfile.TemporaryDirectory(prefix="kiln-package-") as tmp:
         tmp_path = Path(tmp)
 
-        def pack(files: list[Path], tarball: Path) -> bool:
-            if not files:
-                result = subprocess.run(
-                    ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
-                     "--files-from=/dev/null"],
-                    stderr=subprocess.PIPE,
-                )
-            else:
-                filelist = tmp_path / "filelist.txt"
-                filelist.write_text(
-                    "\n".join(str(f.relative_to(install_dir)) for f in files)
-                )
-                result = subprocess.run(
-                    ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
-                     "-C", str(install_dir),
-                     "--files-from", str(filelist)],
-                    stderr=subprocess.PIPE,
-                )
-            if result.returncode != 0:
-                print(f"ERROR: tar failed: {result.stderr.decode().strip()}",
-                      file=sys.stderr)
-                return False
-            return True
+        tarball       = tmp_path / f"{target}.tar.zst"
+        manifest_file = tmp_path / f"{target}.manifest.txt"
 
-        runtime_tarball   = tmp_path / f"{target}.runtime.tar.zst"
-        buildtime_tarball = tmp_path / f"{target}.buildtime.tar.zst"
-        manifest_file     = tmp_path / f"{target}.manifest.txt"
+        filelist = tmp_path / "filelist.txt"
+        filelist.write_text(
+            "\n".join(str(f.relative_to(install_dir)) for f in sorted(to_pack))
+        )
 
-        if not pack(runtime_files, runtime_tarball):
-            reporter.update(target, Status.ERROR)
-            return False
-        if not pack(buildtime_files, buildtime_tarball):
+        result = subprocess.run(
+            ["tar", "--use-compress-program=zstd", "-cf", str(tarball),
+             "-C", str(install_dir),
+             "--files-from", str(filelist)],
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            print(f"ERROR: tar failed: {result.stderr.decode().strip()}",
+                  file=sys.stderr)
             reporter.update(target, Status.ERROR)
             return False
 
         manifest_data = instance.manifest_fields()
         manifest_data["manifest_hash"] = manifest_hash
+        manifest_data["file_roles"]    = {
+            str(f.relative_to(install_dir)): _resolve_role(
+                PurePosixPath(f.relative_to(install_dir)), spec_overrides
+            )
+            for f in sorted(to_pack)
+        }
         manifest_file.write_text(
             json.dumps(manifest_data, indent=2) + "\n",
             encoding="utf-8",
@@ -217,137 +312,6 @@ def verb_package(target: str, config, cache: TieredCache,
                 print(f"ERROR: Coffer push failed: {exc}", file=sys.stderr)
                 reporter.update(target, Status.ERROR)
                 return False
-
-    reporter.update(target, Status.OK)
-    return True
-
-
-def verb_assemble(target: str, config, cache: TieredCache,
-                  reporter: Reporter, push: bool) -> bool:
-    """
-    Assemble an AssemblyDef component -- fetch all dep runtime artifacts
-    from cache and call instance.assemble_command().
-    AssemblyDef components only -- use 'kiln package' for BuildDef.
-    Output is written to <build_root>/.kiln/images/<target>/
-    --push accepted but not yet implemented (future: registry push).
-    """
-    import shutil
-
-    reg, instance = get_builder(target, config)
-    if instance is None:
-        return False
-
-    # Type gate -- BuildDef components use 'kiln package' not 'kiln assemble'
-    if reg.is_build_def(target):
-        print(
-            f"ERROR: '{target}' is a BuildDef -- use 'kiln package' instead.\n"
-            f"       'kiln assemble' is only for AssemblyDef components.",
-            file=sys.stderr,
-        )
-        return False
-
-    reporter.update(target, Status.PACKAGE)
-
-    # --- Resolve DAG to get manifest hashes for all deps ---
-    resolver = make_resolver(config, cache)
-    result   = resolver.resolve(target)
-    if isinstance(result, ResolveError):
-        print(f"ERROR: DAG resolution failed: {result.message}", file=sys.stderr)
-        reporter.update(target, Status.ERROR)
-        return False
-
-    nodes     = (result.components if isinstance(result, ResolvedDAG)
-                 else result.dag.components)
-    dep_nodes = [n for n in nodes
-                 if n.name != target and n.output_store == "cache"]
-
-    # Fail fast -- all deps must be in cache
-    missing = [n for n in dep_nodes if not n.cache_hit]
-    if missing:
-        names = ", ".join(n.name for n in missing)
-        print(
-            f"ERROR: deps not in cache: {names}\n"
-            f"       Run 'kiln deps' to build missing deps first.",
-            file=sys.stderr,
-        )
-        reporter.update(target, Status.ERROR)
-        return False
-
-    # --- Fetch all dep runtime artifacts into a temp staging area ---
-    print(f"  {target}: fetching {len(dep_nodes)} dep runtime artifact(s)")
-    with tempfile.TemporaryDirectory(prefix="kiln-assemble-") as tmp:
-        tmp_path = Path(tmp)
-        artifact_inputs: dict[str, Path] = {}
-
-        for node in dep_nodes:
-            dep_dir = tmp_path / node.name
-            dep_dir.mkdir()
-            try:
-                cache.fetch(node.manifest_hash, node.name, dep_dir)
-            except CofferUnavailable as exc:
-                print(
-                    f"ERROR: Coffer unreachable fetching {node.name}: "
-                    f"{exc.reason}",
-                    file=sys.stderr,
-                )
-                reporter.update(target, Status.ERROR)
-                return False
-            except (CacheMiss, CacheError) as exc:
-                print(f"ERROR: failed to fetch {node.name}: {exc}",
-                      file=sys.stderr)
-                reporter.update(target, Status.ERROR)
-                return False
-
-            runtime = dep_dir / f"{node.name}.runtime.tar.zst"
-            if not runtime.exists():
-                print(
-                    f"ERROR: {node.name} has no runtime tarball in cache.\n"
-                    f"       Was it built with 'kiln package'?",
-                    file=sys.stderr,
-                )
-                reporter.update(target, Status.ERROR)
-                return False
-
-            artifact_inputs[node.name] = dep_dir
-            print(f"  {target}: fetched {node.name} ({node.manifest_hash[:12]})")
-
-        # --- Output directory for assembled artifacts ---
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # --- Call the component's assemble_command ---
-        try:
-            instance.assemble_command(artifact_inputs, output_dir)
-        except NotImplementedError as exc:
-            print(
-                f"ERROR: {target}: assemble_command not implemented: {exc}",
-                file=sys.stderr,
-            )
-            reporter.update(target, Status.ERROR)
-            return False
-        except Exception as exc:
-            print(f"ERROR: {target}: assemble failed: {exc}", file=sys.stderr)
-            if os.environ.get("KILN_TRACEBACK"):
-                import traceback
-                traceback.print_exc()
-            reporter.update(target, Status.ERROR)
-            return False
-
-        # --- Copy output to well-known location ---
-        # <build_root>/.kiln/images/<target>/
-        image_dir = config.build_root / ".kiln" / "images" / target
-        if image_dir.exists():
-            shutil.rmtree(image_dir)
-        image_dir.mkdir(parents=True)
-
-        for f in output_dir.iterdir():
-            if f.is_file():
-                shutil.copy2(f, image_dir / f.name)
-                print(f"  {target}: wrote {f.name} -> {image_dir}")
-
-        if push:
-            print(f"  WARNING: {target}: --push not yet implemented "
-                  f"for AssemblyDef")
 
     reporter.update(target, Status.OK)
     return True
