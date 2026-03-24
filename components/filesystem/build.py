@@ -15,7 +15,6 @@ class Filesystem(BuildDef):
     buildtime_globs = BuildDef.buildtime_globs + [
         "**",
     ]
-
     
     # --- Add these to satisfy BuildDef requirements ---
     def configure_command(self, paths: BuildPaths) -> list[str]:

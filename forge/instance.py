@@ -30,7 +30,6 @@ from __future__ import annotations
 
 
 import importlib
-shlex = importlib.import_module('shlex')
 import shutil
 import subprocess
 import sys
@@ -40,7 +39,7 @@ from unittest import result
 
 from click import command
 
-from components.python3.__source__.Lib import shlex
+import shlex
 from crucible.config import CrucibleConfig
 
 INSTANCES_DIR  = Path.home() / ".kiln" / "instances"

@@ -15,5 +15,4 @@ class Ncurses(AutotoolsBuild):
         '--without-ada',
     ]
 
-
     c_flags = ['-std=gnu17']
