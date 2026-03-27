@@ -16,12 +16,14 @@ Verbs (run in the order given, stop on first failure):
     clean       wipe build directory, leave source
     purge       wipe everything including source and build state
     clear_cache remove all local cache entries
+    resolve     gather artifact hashes for a set of components (for cast)
 Options:
-    --verbose   single worker, stream build output to terminal
-    --no-tty    plain line-per-completion output (auto if not a terminal)
-    --push      push artifacts to Coffer remote cache after package
-    --target    component name to build (default: inferred from cwd)
-    --weight    override max_weight for this run
+    --verbose       single worker, stream build output to terminal
+    --no-tty        plain line-per-completion output (auto if not a terminal)
+    --push          push artifacts to Coffer remote cache after package
+    --target        component name to build (default: inferred from cwd)
+    --weight        override max_weight for this run
+    --from-stdin    (resolve) read component list as JSON array from stdin
 Examples:
     cd components/zlib
     kiln deps
@@ -30,17 +32,19 @@ Examples:
     kiln fetch configure build --verbose
     cd components/base-image
     kiln deps assemble
+
+    # resolve -- for cast image projection
+    kiln resolve bash coreutils systemd
+    echo '["bash", "coreutils"]' | kiln resolve --from-stdin
 """
 from __future__ import annotations
 import datetime
 import os
 import sys
 from pathlib import Path
-
 _here = Path(__file__).parent.parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
-
 import argparse
 from crucible.config import load_config, ConfigError, CrucibleConfig
 from kiln.dag import (
@@ -60,7 +64,12 @@ from kiln.backends import make_resolver
 ALL_VERBS = [
     "deps", "fetch", "checkout", "configure", "build", "test",
     "install", "package", "assemble", "clean", "purge", "clear_cache",
+    "resolve",
 ]
+
+# Verbs that operate on an explicit component list rather than an inferred
+# single target.  These are dispatched before target inference runs.
+_MULTI_TARGET_VERBS = {"resolve"}
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -89,6 +98,11 @@ def make_parser() -> argparse.ArgumentParser:
         help="override max_weight for this run")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
         help="resolve and display dependency DAG, then exit without building")
+    # resolve-specific
+    parser.add_argument(
+        "--from-stdin", action="store_true", dest="from_stdin",
+        help="(resolve) read component list as JSON array from stdin",
+    )
     return parser
 
 # ---------------------------------------------------------------------------
@@ -130,17 +144,14 @@ def verb_deps(target: str, config, cache: TieredCache,
     from kiln.verbs.source import verb_fetch, verb_checkout
     from kiln.verbs.build import verb_configure, verb_build, verb_test, verb_install
     from kiln.verbs.packaging import verb_package
-
     resolver = make_resolver(config, cache)
     result   = resolver.resolve(target)
-
     if isinstance(result, ResolveError):
         print(f"\nERROR: {result.message}", file=sys.stderr)
         if result.involved:
             print(f"       involved: {', '.join(result.involved)}",
                   file=sys.stderr)
         return False
-
     if isinstance(result, ResolvedDAG):
         print()
         for node in result.components:
@@ -148,24 +159,19 @@ def verb_deps(target: str, config, cache: TieredCache,
                   f"weight:{node.build_weight}  {node.manifest_hash[:16]}")
         print(f"\nAll {len(result.components)} dependencies satisfied.")
         return True
-
     # BuildSchedule -- some misses
     dep_misses = [n for n in result.ordered_misses if n.name != target]
     hits       = len(result.dag.components) - len(result.ordered_misses)
-
     print()
     for node in result.dag.components:
         status = Status.CACHED if node.cache_hit else Status.PENDING
         print(f"  [{status.name:^9}]  {node.name:<24}  {node.version:<12}  "
               f"weight:{node.build_weight}  {node.manifest_hash[:16]}")
     print(f"\n{hits} cached, {len(dep_misses)} dep(s) to build.")
-
     if dry_run:
         return True
-
     if not dep_misses:
         return True
-
     # --- Build each missing dep in topo order ---
     BUILD_VERBS = [
         ("fetch",     lambda t, cfg, c, r: verb_fetch(t, cfg, r)),
@@ -189,7 +195,6 @@ def verb_deps(target: str, config, cache: TieredCache,
                 )
                 return False
         print(f"--- dep done:     {dep} ---")
-
     print(f"\nAll {len(dep_misses)} missing dep(s) built successfully.")
     return True
 
@@ -230,19 +235,90 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
         return False
 
 # ---------------------------------------------------------------------------
+# resolve dispatch -- separate from dispatch() because it does not use
+# target inference and writes JSON to stdout rather than driving a build.
+# ---------------------------------------------------------------------------
+def _run_resolve(args, config, cache: TieredCache) -> int:
+    """
+    Handle the resolve verb end-to-end.  Returns an exit code.
+
+    Input priority:
+      1. stdin is a pipe (or --from-stdin is set) → read JSON array from stdin
+      2. --target <name>                           → single component
+      Both are usable from CI/Cast without any extra flags.
+    """
+    from kiln.verbs.resolve import verb_resolve, read_targets_from_stdin
+
+    use_stdin = args.from_stdin or not sys.stdin.isatty()
+
+    if use_stdin:
+        targets = read_targets_from_stdin()
+        if targets is None:
+            return 2
+    elif args.target:
+        targets = [args.target]
+    else:
+        print(
+            "ERROR: resolve requires components via stdin (JSON array)\n"
+            "       or a single component via --target <name>.",
+            file=sys.stderr,
+        )
+        return 2
+
+    ok = verb_resolve(targets, config, cache)
+    return 0 if ok else 1
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     print(
         f"[{datetime.datetime.now().isoformat(timespec='seconds')}] "
         f"kiln {' '.join(sys.argv[1:])}",
+        file=sys.stderr,
         flush=True,
     )
-    print("---------------------------------------------------------------------------")
+    print("---------------------------------------------------------------------------", file=sys.stderr)
 
     parser = make_parser()
     args   = parser.parse_args(argv)
 
+    # ------------------------------------------------------------------
+    # Multi-target verbs bypass the normal single-target inference path.
+    # Currently only 'resolve'.  These must be used alone.
+    # ------------------------------------------------------------------
+    active_multi = _MULTI_TARGET_VERBS.intersection(args.verbs)
+    if active_multi:
+        if len(args.verbs) != len(active_multi) or len(active_multi) > 1:
+            print(
+                f"ERROR: {', '.join(active_multi)} cannot be combined with other verbs.",
+                file=sys.stderr,
+            )
+            return 2
+
+        try:
+            config = load_config()
+        except Exception as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        if args.weight is not None:
+            config.scheduler.max_weight = args.weight
+        try:
+            cache = cache_from_config(config)
+        except Exception as exc:
+            print(f"ERROR: cache initialisation failed: {exc}", file=sys.stderr)
+            return 1
+
+        verb = next(iter(active_multi))
+        if verb == "resolve":
+            return _run_resolve(args, config, cache)
+        # Future multi-target verbs added here.
+        print(f"ERROR: unhandled multi-target verb '{verb}'", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
+    # Normal single-target path (unchanged from original)
+    # ------------------------------------------------------------------
     try:
         config = load_config()
     except Exception as exc:
@@ -295,13 +371,11 @@ def main(argv: list[str] | None = None) -> int:
                 import traceback
                 traceback.print_exc()
             return 1
-
         if not ok:
             print(f"\nFailed at verb: {verb}", file=sys.stderr)
             return 1
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

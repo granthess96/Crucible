@@ -22,6 +22,7 @@ Contract:
 """
 
 from __future__ import annotations
+import sys
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -412,7 +413,7 @@ class Resolver:
             )
 
         output_store: Literal["cache", "registry"] = "cache" if is_build else "registry"
-        print(f"  checking: {name}", flush=True)
+        print(f"  checking: {name}", flush=True, file=sys.stderr)
         cache_hit = self._stat(name, manifest.hash, output_store)
 
         return ComponentNode(
