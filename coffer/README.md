@@ -1,139 +1,184 @@
-# cachectl
+# Coffer — Kiln Remote Artifact Cache
 
-Server-side artifact cache controller for the kiln build system.
+Coffer is the remote artifact cache backend used by the Kiln build system.
 
-## Installation
+It provides a simple, filesystem-based content-addressed cache with:
+- staging upload buckets
+- manifest-validated publishing
+- hash-based lookup
+- LRU garbage collection
 
-```
-/home/cache/
-  bin/cachectl          # this script (chmod +x, python3 shebang)
-  config/cachectl.toml  # configuration
-  cache/                # artifact storage (sharded by hash prefix)
-  staging/              # temporary upload buckets
-  logs/cachectl.log     # operation log
-```
+Coffer is designed for controlled internal infrastructure use and is not intended as a general-purpose or multi-tenant cache service.
 
-Make executable:
+---
+
+## Architecture
+
+Coffer operates on two directories:
+
+### Staging
+Temporary upload area for build outputs:
+
+
+staging/<uuid>/
+
+
+Created via `get-bucket`.
+
+---
+
+### Cache
+Persistent artifact storage keyed by manifest hash:
+
+
+cache/<hash-prefix>/<hash-body>/
+
+
+Each entry contains the full set of build outputs from a staging bucket.
+
+---
+
+## Workflow
+
+### 1. Allocate staging bucket
+
 ```bash
-chmod +x /home/cache/bin/cachectl
-```
+BUCKET=$(cachectl get-bucket)
+2. Upload artifacts
 
-Requires Python 3.11+ (uses `tomllib` from stdlib).
+Client uploads files + manifest into staging bucket.
 
-## Configuration
+3. Publish
+cachectl publish $BUCKET $MANIFEST_HASH
 
-```toml
+Validates:
+
+manifest exists
+hash matches
+all declared outputs exist
+optional SHA256 checks
+
+Then atomically stores artifacts in cache.
+
+4. Fetch artifacts
+CACHE_PATH=$(cachectl fetch $HASH)
+returns cache directory path if present
+exit code 2 if missing
+updates LRU metadata on hit
+5. Probe cache
+cachectl test $HASH
+
+Same as fetch but intended for existence checks.
+
+Garbage Collection
+
+Coffer automatically manages disk usage using a high/low watermark system:
+
+GC triggers when cache exceeds high_water_bytes
+eviction continues until below low_water_bytes
+least-recently-used entries are removed first
+
+Staging buckets older than TTL are also removed.
+
+Configuration
+
+cachectl.toml
+
 [storage]
 cache_root       = "/home/cache/cache"
 staging_root     = "/home/cache/staging"
-high_water_bytes = 50_000_000_000   # 50 GiB
-low_water_bytes  = 40_000_000_000   # 40 GiB
+high_water_bytes = 50000000000
+low_water_bytes  = 40000000000
 
 [staging]
 ttl_hours = 4
 
 [server]
 log_path = "/home/cache/logs/cachectl.log"
-```
+Exit Codes
+Code	Meaning
+0	success / cache hit
+2	cache miss
+1	error
+Notes
+Cache entries are stored as full directory copies of staging buckets.
+LRU is approximated using file modification times.
+GC runs automatically after most operations.
 
-## Commands
+## 3. TODO.md (Actionable, grounded in code)
 
-### `cachectl get-bucket`
-Allocates a new empty staging directory and prints its path.
-The caller uploads artifacts into this directory before calling `publish`.
-Staging buckets not published within `ttl_hours` are automatically reaped.
+```markdown
+# Coffer TODO
 
-```bash
-BUCKET=$(ssh cache@remote 'cachectl get-bucket')
-scp ncurses.manifest.txt ncurses.runtime.tar.zst ncurses.buildtime.tar.zst \
-    cache@remote:"$BUCKET/"
-ssh cache@remote "cachectl publish $BUCKET $MANIFEST_HASH"
-```
+This reflects observed implementation gaps and operational improvements.
 
-### `cachectl publish <bucket_path> <manifest_hash>`
-Validates the staging bucket and atomically moves it into the cache.
+---
 
-Validation checks:
-- Manifest file exists in bucket
-- `manifest_hash` field in manifest matches the provided hash
-- All artifact files listed in manifest `outputs` are present
-- SHA256 of each artifact matches manifest (if recorded)
+## Correctness / Reliability
 
-Triggers GC after publish.
+- [ ] Add file locking around:
+  - publish()
+  - gc()
+  - fetch/test access paths
+  (prevents race conditions during concurrent SSH operations)
 
-### `cachectl fetch <manifest_hash>`
-Returns the cache directory path if the hash is present (exit 0).
-Exits with code 2 on cache miss.
-Updates LRU timestamp on hit.
-Triggers GC.
+- [ ] Make manifest format explicit schema definition
+  - currently implicit JSON structure
 
-```bash
-if CACHE_PATH=$(ssh cache@remote "cachectl fetch $HASH"); then
-    scp "cache@remote:$CACHE_PATH/*" ./artifacts/
-fi
-# exit 2 = miss, handle rebuild
-```
+- [ ] Validate staging bucket contents more strictly:
+  - ensure exactly one manifest file OR deterministic selection
 
-### `cachectl test <manifest_hash>`
-Same as `fetch` but semantically a probe — use when the local cache already
-has the artifacts and only needs to update the remote LRU hint.
-Exit 0 = hit, exit 2 = miss.
+---
 
-```bash
-ssh cache@remote "cachectl test $HASH" || echo "not cached"
-```
+## GC Improvements
 
-### `cachectl gc`
-Runs garbage collection explicitly. Suitable for cron.
-GC also runs automatically on every other operation.
+- [ ] Replace repeated dir_size() calls with cached traversal
+- [ ] Avoid full filesystem scan per GC invocation
+- [ ] Consider storing per-bucket size metadata during publish
 
-```bash
-# crontab example — run GC at 3am daily
-0 3 * * * /home/cache/bin/cachectl gc
-```
+---
 
-### `cachectl status`
-Prints a human-readable cache summary.
+## LRU / Access Tracking
 
-```
-cache_root:      /home/cache/cache
-cache_size:      23.4 GiB (25165824000 bytes)
-cache_entries:   142
-high_water:      50.0 GiB
-low_water:       40.0 GiB
-staging_root:    /home/cache/staging
-staging_size:    1.2 GiB
-staging_pending: 3
-staging_ttl:     4h
-```
+- [ ] Replace mtime-based LRU with explicit metadata file:
+  - `.access_timestamp`
+- [ ] Avoid touching every file in bucket for LRU updates
 
-## Exit Codes
+---
 
-| Code | Meaning              |
-|------|----------------------|
-| 0    | Success / cache hit  |
-| 1    | Error                |
-| 2    | Cache miss           |
+## Operational Improvements
 
-## GC Behavior
+- [ ] Add dry-run mode for gc
+- [ ] Add GC metrics output (bytes freed, buckets removed)
+- [ ] Add structured JSON output mode for status
 
-GC uses LRU eviction based on file `mtime`, which is updated on every
-`test`, `fetch`, and `publish` operation.
+---
 
-When cache size exceeds `high_water_bytes`, entries are evicted oldest-first
-until size drops below `low_water_bytes` (hysteresis).
+## Observability
 
-Stale staging buckets (older than `ttl_hours`) are also reaped on every GC run.
+- [ ] Expand logging for:
+  - publish success/failure reasons
+  - GC decisions per bucket
+- [ ] Add log rotation support (currently external responsibility)
 
-## Cache Layout
+---
 
-Mirrors the local kiln cache layout:
+## API Consistency
 
-```
-/home/cache/cache/
-  <hash_prefix>/        # first 2 hex chars of manifest hash
-    <hash_body>/        # remaining hex chars
-      <stem>.manifest.txt
-      <stem>.runtime.tar.zst
-      <stem>.buildtime.tar.zst
-```
+- [ ] Standardize fetch/test semantics:
+  - currently duplicated logic
+  - could share internal resolver function
+
+---
+
+## Safety (internal infra context)
+
+- [ ] Add optional safeguard:
+  - prevent GC if cache size rapidly changes during run
+
+---
+
+## Minor Cleanup
+
+- [ ] Remove unused import: `fcntl`
+- [ ] Normalize naming: bucket_dir vs body_dir vs prefix_dir
