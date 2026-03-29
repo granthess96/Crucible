@@ -22,11 +22,6 @@ def verb_clean(target: str, config, reporter: Reporter) -> bool:
             path.mkdir()
             print(f"  {target}: cleared {d}/")
 
-    # Clear configured sentinel so configure must re-run
-    sentinel = config.build_root / ".kiln" / "state" / target / "configured"
-    if sentinel.exists():
-        sentinel.unlink()
-
     reporter.update(target, Status.OK)
     return True
 
@@ -39,13 +34,6 @@ def verb_purge(target: str, config, reporter: Reporter) -> bool:
         if path.exists():
             shutil.rmtree(path)
             print(f"  {target}: cleared {d}/")
-
-    # Clear sentinels
-    state_dir = config.build_root / ".kiln" / "state" / target
-    for sentinel in ("checked_out", "configured"):
-        f = state_dir / sentinel
-        if f.exists():
-            f.unlink()
 
     reporter.update(target, Status.OK)
     return True

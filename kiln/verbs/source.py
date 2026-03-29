@@ -227,7 +227,7 @@ def verb_checkout(target: str, config, cache: TieredCache,
                   reporter: Reporter) -> bool:
     """
     Set up the complete build environment for a component:
-      1. Verify kiln fetch was run (source_id sentinel exists)
+      1. Verify kiln fetch was run (source_id exists)
       2. Wipe __source__/, __sysroot__/, __build__/, __install__/ for clean slate
       3. Export/extract source into __source__/
          - git:     git archive from bare clone at locked SHA
@@ -235,7 +235,7 @@ def verb_checkout(target: str, config, cache: TieredCache,
       4. Apply patches in lexicographic order
       5. Unpack all dep artifacts into __sysroot__/
       6. Create empty __build__/ and __install__/
-      7. Write checked_out sentinel
+      7. Create state directory
     Destructive -- always starts from a clean slate. No prompts.
     Precondition: kiln fetch must have run.
     All deps must be present in the artifact cache.
@@ -277,7 +277,6 @@ def verb_checkout(target: str, config, cache: TieredCache,
         sysroot_dir.mkdir(exist_ok=True)
         build_dir.mkdir(exist_ok=True)
         install_dir.mkdir(exist_ok=True)
-        (state_dir / "checked_out").write_text("none\n", encoding="utf-8")
         print(f"  {target}: no source (synthetic component)")
         reporter.update(target, Status.OK)
         return True
@@ -404,9 +403,7 @@ def verb_checkout(target: str, config, cache: TieredCache,
     install_dir.mkdir()
     _setup_usr_merge(install_dir)  # Prepare install directory for /usr merge
 
-    # --- Write checked_out sentinel ---
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "checked_out").write_text(f"{source_id}\n", encoding="utf-8")
 
     reporter.update(target, Status.OK)
     return True

@@ -31,19 +31,6 @@ def get_builder(target: str, config):
     return reg, reg.instantiate(target)
 
 
-def check_sentinel(config, target: str, sentinel: str, missing_verb: str) -> bool:
-    """Return True if sentinel file exists, print clear error if not."""
-    sentinel_file = config.build_root / ".kiln" / "state" / target / sentinel
-    if not sentinel_file.exists():
-        print(
-            f"ERROR: {target} has not been {sentinel.replace('_', ' ')}.\n"
-            f"       Run 'kiln {missing_verb}' first.",
-            file=sys.stderr,
-        )
-        return False
-    return True
-
-
 def resolve_verb(instance, verb: str, paths):
     """
     Return (script_body_or_None, cmd_or_None) for a given verb.

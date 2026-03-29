@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
 from kiln.output import Reporter, Status
 from kiln.cache import TieredCache, CacheMiss, CacheError, CofferUnavailable
 from kiln.dag import KilnLock, ResolvedDAG, ResolveError
-from kiln.executor import get_builder, check_sentinel
+from kiln.executor import get_builder
 from kiln.backends import make_resolver
 from kiln.spec import Role
 
@@ -157,9 +157,6 @@ def verb_package(target: str, config, cache: TieredCache,
       <target>.files.json.zst  -- compressed path→role index
       <target>.manifest.txt    -- build identity / manifest hash
     """
-    if not check_sentinel(config, target, "configured", "configure"):
-        return False
-
     reg, instance = get_builder(target, config)
     if instance is None:
         return False
