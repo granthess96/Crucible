@@ -1,4 +1,5 @@
 from kiln.builders import AutotoolsBuild
+from kiln.spec import FileSpec
 
 
 class GlibcBuild(AutotoolsBuild):
@@ -21,40 +22,37 @@ class GlibcBuild(AutotoolsBuild):
     link_flags = ["-Wl,-z,relro"]
 
     # -------------------------------------------------------------------------
-    # Glibc installs into a multiarch layout under usr/lib/x86_64-linux-gnu/.
-    # The base class globs cover *.so and *.so.* recursively, which catches
-    # libc.so.6, libm.so.6, libpthread.so.0, ld-linux-x86-64.so.2 etc.
+    # FileSpec overrides for glibc packaging
+    # -------------------------------------------------------------------------
+    # Glibc installs into a multiarch layout under lib64/x86_64-linux-gnu/.
+    # Path inference handles most files correctly, but glibc has special cases:
     #
-    # Additions needed beyond the base class:
+    # 1. ld-linux-x86-64.so.2 (the dynamic loader):
+    #    - Role: runtime (primary use case as ELF interpreter)
+    #    - Note: versioned .so files normally go to runtime, which is correct here
     #
-    # runtime:
-    #   gconv/          — iconv/locale conversion modules (.so files loaded
-    #                     at runtime by iconv_open(); absence causes locale
-    #                     failures in downstream components)
-    #   usr/libexec/**  — pt_chown and other glibc helper executables
-    #   var/db/Makefile — glibc locale database build helper (harmless to include)
+    # 2. gconv/ modules (iconv locale conversion):
+    #    - Role: runtime (loaded at runtime by iconv_open())
+    #    - Absence causes locale failures in downstream components
     #
-    # buildtime:
-    #   **/*.o          — crt1.o, crti.o, crtn.o, Scrt1.o, gcrt1.o live in
-    #                     usr/lib/x86_64-linux-gnu/ and are required to link
-    #                     any C program. The base class covers *.o but be
-    #                     explicit here for clarity.
-    #   **/gconv/*.so   — some build systems probe gconv at configure time;
-    #                     listed in both so a buildtime-only sysroot works too.
+    # 3. usr/libexec/pt_chown and other helper executables:
+    #    - Role: runtime (support utilities called at runtime)
+    #
+    # 4. var/db/Makefile (locale database build helper):
+    #    - Role: exclude (harmless but not needed in final package)
     # -------------------------------------------------------------------------
 
-#    runtime_globs = AutotoolsBuild.runtime_globs + [
-#        "usr/libexec/**",
-#        "usr/lib/**/gconv/**",
-#        "var/**",
-#        "lib64/**",
-#        "sbin/**",
-#        "usr/libexec/**",
-#        "usr/lib/***/gconv/**",
-#        "usr/lib64/gconv/**",
-#    ]
+    files = [
+        # gconv modules are runtime data (needed for locale support)
+        FileSpec("**/gconv/**", role="runtime"),
 
-#    buildtime_globs = AutotoolsBuild.buildtime_globs + [
-#        "usr/lib/**/*.o",
-#        "usr/lib/**/gconv/**",
-# ]
+        # libexec utilities are runtime support tools
+        FileSpec("usr/libexec/**", role="runtime"),
+
+        # Exclude build-time locale database helpers
+        FileSpec("var/db/Makefile", role="exclude"),
+    ]
+
+    # -------------------------------------------------------------------------
+    # Previous glob-based approach (superseded by FileSpec)
+    # -------------------------------------------------------------------------
