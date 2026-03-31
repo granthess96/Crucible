@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""
+bin/cast — Entry point for Cast tool.
+
+Finds the project root (forge.toml) and invokes cast.__main__.
+Designed to be symlinked to /usr/local/bin/cast.
+"""
+import sys
+from pathlib import Path
+
+
+def find_project_root():
+    """Walk up from cwd to find forge.toml (project root marker)."""
+    for d in [Path.cwd(), *Path.cwd().parents]:
+        if (d / "forge.toml").exists():
+            return d
+    raise SystemExit(
+        "Error: forge.toml not found — are you inside a Crucible project?"
+    )
+
+
+# Add project root to path so we can import cast
+sys.path.insert(0, str(find_project_root()))
+
+from cast.__main__ import main
+
+sys.exit(main())
