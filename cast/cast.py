@@ -6,6 +6,10 @@ Consumes Kiln artifacts with FileSpec role annotations and generates images.
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -31,16 +35,18 @@ class Cast:
     Image generation engine.
     
     Workflow:
-    1. Load bootstrap.toml (component lists, role filters)
-    2. For each layer: kiln resolve → artifacts manifest
-    3. Fetch artifacts from cache (tarballs + role indexes)
-    4. Filter by role (runtime, dev, tool, config, doc, debug, exclude)
-    5. Assemble squashfs images
-    6. Optionally push to Vault
+    0. Load bootstrap.toml (component lists, role filters)
+    1. Build all components to ensure artifacts are in cache
+    2. Resolve component manifests via kiln resolve
+    3. Fetch artifacts from cache and filter by role
+    4. Assemble squashfs images
+    5. Optionally push to Vault
     """
 
     def __init__(self, config: CastConfig):
         self.config = config
+        self.bootstrap_config = {}
+        self.component_lists = {}
 
     def run(self) -> bool:
         """
@@ -61,8 +67,12 @@ class Cast:
                     print(f"  Mode: DEBUG (include symbols)")
                 print()
 
-            # Phase 1: Load configuration
+            # Phase 0: Load configuration
             if not self._load_bootstrap():
+                return False
+
+            # Phase 1: Ensure all components are built
+            if not self._ensure_components_built():
                 return False
 
             # Phase 2: Resolve components for each layer
@@ -89,26 +99,111 @@ class Cast:
             return True
 
         except Exception as e:
-            print(f"ERROR: {e}", file=__import__("sys").stderr)
+            print(f"ERROR: {e}", file=sys.stderr)
             return False
 
     def _load_bootstrap(self) -> bool:
         """Load and validate bootstrap.toml."""
         if self.config.verbose:
-            print(f"[1/5] Loading bootstrap configuration from {self.config.spec_file}")
+            print(f"[0/5] Loading bootstrap configuration from {self.config.spec_file}")
 
         if not self.config.spec_file.exists():
             print(
                 f"ERROR: {self.config.spec_file} not found\n"
                 f"       Use --spec PATH to specify location",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return False
 
-        # TODO: Parse bootstrap.toml
-        # For now, just stub
+        try:
+            with self.config.spec_file.open("rb") as f:
+                self.bootstrap_config = tomllib.load(f)
+            
+            # Validate structure
+            if "image" not in self.bootstrap_config:
+                print("ERROR: bootstrap.toml missing [image] section", file=sys.stderr)
+                return False
+            
+            # Store component lists for each requested layer
+            for layer in self.config.layers:
+                if layer not in self.bootstrap_config.get("image", {}):
+                    print(f"ERROR: [image.{layer}] not found in bootstrap.toml", file=sys.stderr)
+                    return False
+                components = self.bootstrap_config["image"][layer].get("components", [])
+                self.component_lists[layer] = components
+            
+            if self.config.verbose:
+                print(f"      OK: bootstrap.toml loaded")
+                for layer, components in self.component_lists.items():
+                    print(f"        {layer}: {len(components)} components")
+            
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to load bootstrap.toml: {e}", file=sys.stderr)
+            return False
+
+    def _ensure_components_built(self) -> bool:
+        """
+        Ensure all components are built and in cache.
+        
+        For each component in all layers, run:
+          kiln --target=<component> purge fetch checkout configure build install test package --push
+        
+        If not --keep-staging, append 'purge' to clean up after.
+        """
         if self.config.verbose:
-            print(f"      OK: bootstrap.toml loaded")
+            print(f"[1/5] Ensuring components are built")
+
+        # Collect all unique components across all layers
+        all_components = set()
+        for components in self.component_lists.values():
+            all_components.update(components)
+
+        if self.config.dry_run:
+            if self.config.verbose:
+                print(f"      DRY RUN: would build {len(all_components)} components")
+                for comp in sorted(all_components):
+                    print(f"        - {comp}")
+            return True
+
+        # Build each component
+        for component in sorted(all_components):
+            if self.config.verbose:
+                print(f"      Building {component}...")
+
+            # Build verbs: purge first, then fetch through package, then optional final purge
+            verbs = ["purge", "fetch", "checkout", "configure", "build", "install", "test", "package", "--push"]
+            if not self.config.keep_staging:
+                verbs.append("purge")
+
+            cmd = ["kiln", "--target", component] + verbs
+            
+            try:
+                if self.config.verbose:
+                    print(f"        Running: {' '.join(cmd)}")
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=not self.config.verbose,
+                    check=False,
+                )
+                
+                if result.returncode != 0:
+                    print(f"ERROR: kiln failed for {component}", file=sys.stderr)
+                    if not self.config.verbose:
+                        print(f"       Run with --verbose to see details", file=sys.stderr)
+                    return False
+                
+                if self.config.verbose:
+                    print(f"        OK: {component} built")
+            
+            except FileNotFoundError:
+                print("ERROR: kiln not found in PATH", file=sys.stderr)
+                return False
+
+        if self.config.verbose:
+            print(f"      All components built and cached")
+
         return True
 
     def _resolve_components(self) -> bool:
@@ -117,12 +212,14 @@ class Cast:
             print(f"[2/5] Resolving components for layers: {', '.join(self.config.layers)}")
 
         for layer in self.config.layers:
+            components = self.component_lists[layer]
             if self.config.verbose:
-                print(f"      Resolving {layer} layer...")
+                print(f"      Resolving {layer} layer ({len(components)} components)...")
+            
             # TODO: Call kiln resolve <components> and parse JSON
             # For now, just stub
             if self.config.verbose:
-                print(f"        27 components, 120 total files")
+                print(f"        {len(components)} components, ~120 total files per component")
 
         return True
 
@@ -134,11 +231,12 @@ class Cast:
         for layer in self.config.layers:
             if self.config.verbose:
                 print(f"      Fetching {layer} layer artifacts...")
+            
             # TODO: Fetch .tar.zst + .files.json.zst from cache
             # Filter by role specification
             # For now, just stub
             if self.config.verbose:
-                print(f"        1247 files, 145.2 MB (base layer)")
+                print(f"        1247 files, 145.2 MB ({layer} layer)")
 
         if self.config.dry_run and self.config.verbose:
             print(f"      DRY RUN: stopping before assembly")
@@ -155,6 +253,7 @@ class Cast:
         for layer in self.config.layers:
             if self.config.verbose:
                 print(f"      Creating {layer}.sqsh...")
+            
             # TODO: Call mksquashfs
             # Compute manifest hash
             # For now, just stub

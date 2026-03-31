@@ -46,21 +46,6 @@ def find_forge_toml(start_dir: Path = None) -> Path | None:
     return None
 
 
-def get_vault_url_from_config(forge_toml: Path) -> str | None:
-    """
-    Extract [vault].url from forge.toml if present.
-    Returns None if not found (--vault must be specified).
-    """
-    import tomllib
-
-    try:
-        with forge_toml.open("rb") as f:
-            data = tomllib.load(f)
-        return data.get("vault", {}).get("url")
-    except Exception:
-        return None
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """
     Main entry point for Cast CLI.
@@ -193,9 +178,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Determine Vault URL
     if args.vault_url is None and args.push:
         if forge_toml:
-            vault_url = get_vault_url_from_config(forge_toml)
-            if vault_url:
-                args.vault_url = vault_url
+            try:
+                sys.path.insert(0, str(forge_toml.parent))
+                from crucible.config import load_config
+                cfg = load_config(forge_toml.parent)
+                args.vault_url = cfg.vault.url
+            except Exception:
+                pass
 
         if args.vault_url is None:
             print(
