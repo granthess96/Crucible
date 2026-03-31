@@ -1,4 +1,11 @@
-Crucible Compute Software Lifecycle Platform – Project Summary
+**DEPRECATED** — This file is deprecated. Its content has been consolidated into README.md.
+
+The high-level platform overview described here is now in the main README's "What problem this solves" and "Tools" sections.
+
+---
+
+# Crucible Compute Software Lifecycle Platform – Project Summary
+
 
 The Crucible Compute Software Lifecycle platform is designed to ensure the stability, reproducibility, and auditability of the ROCm software stack. Its primary focus is provenance tracking: every build and test is fully traceable, capturing the exact sources, dependencies, toolchains, and base images used, enabling deterministic builds and rigorous software lifecycle management.
 

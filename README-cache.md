@@ -1,4 +1,11 @@
-Remote Artifact Cache - Crucible Coffer
+**DEPRECATED** — This file is deprecated. Its content has been consolidated into README.md.
+
+The cache architecture, operations, and garbage collection details are now in the main README's "Artifact cache" section, and the Coffer documentation is in the "Tools" section under "Coffer".
+
+---
+
+# Remote Artifact Cache - Crucible Coffer
+
 
 This is a minimal, content-addressed, manifest-rooted build artifact cache designed for accelerating builds. It is ephemeral, immutable, and file-system-based, requiring only SSH access to a remote server.
 

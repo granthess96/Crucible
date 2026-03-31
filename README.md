@@ -14,7 +14,7 @@ Crucible solves this by:
 - Treating every component as a pure function of its inputs (source, build script, deps, toolchain, base image)
 - Hashing those inputs into a manifest → cache key
 - Never rebuilding what's already cached, never using a stale cache entry
-- Providing a simple CLI that handles the entire lifecycle: fetch → checkout → configure → build → test → install → package → assemble
+- Providing a simple CLI that handles the entire lifecycle: fetch → checkout → configure → build → test → install → package
 
 ---
 
@@ -23,7 +23,7 @@ Crucible solves this by:
 ### Forge
 Hermetic build sandbox. Uses Linux user namespaces + squashfuse + overlayfs to create a chroot-like environment without requiring real root. Mounts `base.sqsh` (read-only rootfs) and `tools.sqsh` (compiler/toolchain) as the build environment, overlays the component's `__source__`, `__sysroot__`, `__build__`, and `__install__` directories, then runs the build command inside.
 
-Forge is invoked as a subprocess by Kiln — it handles its own `unshare` context and exits cleanly, so Kiln stays in user context for host-side operations (fetch, checkout, package, assemble).
+Forge is invoked as a subprocess by Kiln — it handles its own `unshare` context and exits cleanly, so Kiln stays in user context for host-side operations (fetch, checkout, package).
 
 ```
 forge -- <command>               # run command in forge environment
@@ -49,7 +49,6 @@ Verbs run in order, stop on first failure:
 | `test` | Run test suite (skip if none defined) | host |
 | `install` | DESTDIR install into `__install__/` | forge |
 | `package` | Split `__install__/` into runtime + buildtime tarballs, store in cache | host |
-| `assemble` | Merge dep runtime artifacts, call `assemble_command()` (e.g. mksquashfs) | host |
 | `clean` | Wipe `__build__/` and `__install__/` | host |
 | `purge` | Wipe everything including source and sysroot | host |
 | `clear_cache` | Remove all local cache entries | host |
@@ -67,7 +66,7 @@ kiln deps --push                 # build all missing deps + push each to Coffer
 Server-side tool is `cachectl`. Configured via `coffer_host = "user@host"` in `forge.toml` or `~/.kiln/config.toml`. SSH key auth — no tokens.
 
 ### Vault *(planned)*
-Long-term image/container registry. Coffer is ephemeral (LRU eviction); Vault is permanent. `--push` on an AssemblyDef will promote a built image to Vault when implemented.
+Long-term image/container registry for permanent artifact storage. Coffer is ephemeral (LRU eviction); Vault is designed as the permanent archive. Not yet implemented.
 
 ---
 
@@ -76,15 +75,16 @@ Long-term image/container registry. Coffer is ephemeral (LRU eviction); Vault is
 Each component lives in `components/<name>/build.py` and declares a single class:
 
 ```
-KilnComponent
+KilnComponent (abstract base)
 ├── BuildDef          compiles source → artifact cache    (kiln package)
 │   ├── AutotoolsBuild
 │   ├── CMakeBuild
-│   └── MakeBuild
-└── AssemblyDef       composes artifacts → image/container (kiln assemble)
-    ├── ImageDef      → squashfs via mksquashfs
-    └── ContainerDef  → OCI/podman (TBD)
+│   ├── MakeBuild
+│   ├── MesonBuild
+│   └── ScriptBuild
 ```
+
+*Note: AssemblyDef (for image composition via `assemble` verb) and ContainerDef are planned but not yet implemented. Image assembly will be handled by separate tooling.*
 
 A `BuildDef` must declare:
 - `name`, `version` — identity
@@ -93,18 +93,16 @@ A `BuildDef` must declare:
 - `build_weight` — scheduler hint (empirical, based on build time)
 
 A `BuildDef` may override:
-- `configure_args`, `comp_flags`, `link_flags` — passed to build system
+- `configure_args`, `c_flags`, `cxx_flags`, `link_flags` — passed to build system
 - `configure_command()`, `build_command()`, `install_command()` — full override
 - `configure_script()`, `build_script()`, `install_script()` — shell script override (runs via forge bash)
 - `runtime_globs`, `buildtime_globs` — controls how `__install__/` is split into tarballs
 
-An `ImageDef` declares `deps` and optionally overrides:
-- `squashfs_args` — extra flags to mksquashfs
-- `post_install(rootfs)` — fixups after extraction, before squashfs (symlinks, /etc files, etc.)
-
 ---
 
 ## Artifact cache
+
+### Cache Layout and Manifest Hashing
 
 Every built artifact is addressed by the SHA256 of its canonical manifest. The manifest captures every input:
 
@@ -122,15 +120,44 @@ toolchain: <hash of tools.sqsh>
 
 A change to any input — including a dep's dep — produces a new hash and a cache miss.
 
-Artifacts are stored as three files per component:
+Artifacts are stored as three files per component in a sharded layout:
+
 ```
-<hash>/<name>.runtime.tar.zst    # binaries, .so files
-<hash>/<name>.buildtime.tar.zst  # headers, .a files, pkgconfig
-<hash>/<name>.manifest.txt       # manifest fields (human readable)
+<shard>/<hash_body>/
+  <name>.runtime.tar.zst    # binaries, .so files
+  <name>.buildtime.tar.zst  # headers, .a files, pkgconfig
+  <name>.manifest.txt       # manifest fields (human readable)
 ```
 
-Local cache default: `~/.kiln/cache/`  
-Coffer remote: configurable via `coffer_host`
+Where `<shard>` is the first 2 characters of the manifest hash (for shallow sharding, similar to git object store).
+
+### Two-Tier Cache: Local + Remote
+
+**Tier 1: Local cache** (`~/.kiln/cache/` by default)  
+- Full read/write for any user
+- Sharded by first 2 chars of manifest hash
+- Clearable at any time with no side effects (just longer build times)
+
+**Tier 2: Coffer remote cache** (SSH-based, server-side tool: `cachectl`)  
+- Read for all users (fetch-through to local)
+- Write only via `--push` flag
+- Configured in `forge.toml` or `~/.kiln/config.toml`
+- SSH key auth — no tokens
+
+### Cache Hit Resolution Order
+
+1. **Local hit** → use directly + background LRU touch on remote
+2. **Local miss + remote hit** → fetch to local + promote to cache + use
+3. **Both miss** → build required
+
+### Garbage Collection
+
+Coffer enforces a disk quota. When quota is exceeded:
+- GC is triggered on `--push`
+- Eviction uses last-accessed timestamps from manifests (LRU)
+- Lost artifacts are simply rebuilt — cache loss is acceptable
+
+Local cache can be cleared with `kiln clear_cache`.
 
 ---
 
@@ -206,12 +233,6 @@ kiln deps                                    # builds zlib, openssl if missing
 kiln fetch checkout configure build install package --push
 ```
 
-### Build and assemble the base image
-```bash
-cd components/base-image
-kiln deps assemble                           # builds all missing deps, then assembles squashfs
-```
-
 ### Rebuild after changing a dep
 ```bash
 # Edit components/openssl/build.py
@@ -249,7 +270,6 @@ Currently `kiln deps` both reports and builds. The reporting-only behavior will 
 | openssl | 3.4.1 | AutotoolsBuild | custom Configure script |
 | curl | 8.11.1 | CMakeBuild | |
 | libpng | 1.6.44 | CMakeBuild | |
-| base-image | 1.0 | ImageDef | squashfs of all runtime artifacts |
 
 ---
 
@@ -263,9 +283,9 @@ For comprehensive guidance on the Crucible architecture, build conventions, and 
 
 - `kiln deps --dry-run` — current `kiln deps` behavior (report only) should become `--dry-run`; bare `kiln deps` now builds
 - `bzip2` MakeBuild — `MakeBuild` base class is minimal; bzip2 overrides `install_command` directly
-- `--push` for `AssemblyDef` — accepted but not implemented (Vault not yet designed)
-- Namespace/execution refactor — `fetch`, `checkout`, `package`, `assemble` are correctly host-side; forge verbs spawn forge subprocess; the old unshare re-exec of kiln is removed
+- Namespace/execution refactor — `fetch`, `checkout`, `package` are correctly host-side; forge verbs spawn forge subprocess; the old unshare re-exec of kiln is removed
 - Parallel scheduling — `build_weight` is tracked but scheduler runs sequentially; parallel `kiln deps` is a future feature
 - Audit log timestamps — `Reporter` writes to audit dir but per-verb timing is not yet recorded
-- `ContainerDef` — stubbed, not implemented
-- Vault — designed but not implemented
+- `AssemblyDef` / `ImageDef` — image assembly (squashfs, OCI containers) not yet implemented
+- `ContainerDef` — OCI/podman support stubbed but not implemented
+- Vault — permanent image/container registry designed but not yet implemented

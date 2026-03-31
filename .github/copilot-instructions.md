@@ -25,10 +25,6 @@ kiln fetch checkout configure build install package --push
 
 # Build all missing dependencies, then build the component
 kiln deps fetch checkout configure build install package
-
-# Build and assemble a final image
-cd components/base-image
-kiln deps assemble
 ```
 
 ### Available Build Verbs
@@ -45,7 +41,6 @@ Run in order; stop on first failure. All paths resolve relative to `forge.toml`:
 | `test` | Run test suite (skip if none defined) | host |
 | `install` | DESTDIR install into `__install__/` | forge |
 | `package` | Split `__install__/` into runtime + buildtime tarballs, store in cache | host |
-| `assemble` | Merge dep runtime artifacts, call `assemble_command()` (e.g. mksquashfs) | host |
 | `clean` | Wipe `__build__/` and `__install__/` | host |
 | `purge` | Wipe everything including source and sysroot | host |
 | `clear_cache` | Remove all local cache entries | host |
@@ -97,7 +92,7 @@ KilnComponent (abstract base)
 
 ### Component Lifecycle
 
-**Host-side operations:** Fetch source from upstream, lock versions to `kiln.lock`, manage artifact cache, assemble final images.
+**Host-side operations:** Fetch source from upstream, lock versions to `kiln.lock`, manage artifact cache.
 
 **Forge operations:** All compilation steps (configure, build, test, install) run inside the hermetic forge environment with pinned base image + toolchain.
 
