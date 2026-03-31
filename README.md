@@ -68,6 +68,20 @@ Server-side tool is `cachectl`. Configured via `coffer_host = "user@host"` in `f
 ### Vault *(planned)*
 Long-term image/container registry for permanent artifact storage. Coffer is ephemeral (LRU eviction); Vault is designed as the permanent archive. Not yet implemented.
 
+### Cast *(planned)*
+Image generation and projection tool. Consumes packaged artifacts (with FileSpec role annotations) and generates target images (squashfs, tar, OCI, etc). Replaces the planned `assemble` verb from Kiln. Works downstream of Kiln — takes cached, packaged artifacts and uses FileSpec role classifications to selectively include/exclude components and files based on image requirements.
+
+```
+cast --base <base_image> --output <image.sqsh> [--format squashfs|tar|oci] <components...>
+```
+
+### Crucible *(planned)*
+End-to-end coordination tool. Orchestrates the full build-to-image pipeline: runs Kiln to resolve and build components, manages artifacts, and invokes Cast to generate final images. Provides a single entry point for complete builds and handles parallelization of independent component builds.
+
+```
+crucible build --target <image_name> [--push] [--registry <host>]
+```
+
 ---
 
 ## Component model
