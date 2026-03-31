@@ -1,0 +1,86 @@
+# bootstrap.toml
+#
+# Image definitions for Forge base and tools squashfs images.
+#
+# Philosophy:
+# - base.sqsh: OS foundation + arch-independent tooling (portable across x86_64, aarch64, etc.)
+# - tools.sqsh: Arch-specific compiler toolchain (tied to build architecture)
+#
+# Principle: If ANY part of a component is architecture-specific, the ENTIRE component
+# goes into tools. This avoids complexity of splitting arch-dependent from arch-independent.
+
+[image.base]
+description = "Base OS image: POSIX utilities, interpreters, portable build tools"
+format = "squashfs"
+components = [
+    # Core POSIX utilities
+    "bash",              # Shell
+    "coreutils",         # mkdir, cp, rm, ls, etc.
+    "findutils",         # find, xargs
+    "grep",              # Text search
+    "sed",               # Stream editor
+    "gawk",              # AWK interpreter
+    
+    # Build tools (arch-independent)
+    "make",              # Make build system
+    "ninja",             # Ninja build system
+    "cmake",             # CMake build system
+    "flex",              # Lexer generator (produces arch-independent C)
+    "bison",             # Parser generator (produces arch-independent C)
+    "m4",                # Macro processor
+    
+    # Compression and archive tools
+    "gzip",              # gzip compression
+    "bzip2",             # bzip2 compression
+    "xz",                # XZ compression
+    "tar",               # Archive utility
+    "zlib",              # Compression library (generic, no arch-specific code)
+    
+    # Runtime libraries (arch abstractions)
+    "glibc",             # C library (ABI abstraction over arch details)
+    "ncurses",           # Terminal handling library
+    "readline",          # Line editing library
+    "openssl",           # Cryptography library (no arch-specific components)
+    
+    # Scripting languages and interpreters
+    "perl",              # Perl interpreter
+    "python3",           # Python interpreter
+    
+    # System basics
+    "filesystem",        # FHS directory structure
+    "linux-headers",     # Kernel headers (portable across architectures)
+    "patch",             # Patch utility
+]
+
+[image.tools]
+description = "Tools image: Architecture-specific compiler toolchain"
+format = "squashfs"
+components = [
+    # Compiler toolchain (ARCHITECTURE-SPECIFIC)
+    "gcc",               # C/C++ compiler (compiled for host arch, produces target arch binaries)
+    "binutils",          # Assembler, linker, objdump (arch-specific target binaries)
+    
+    # GCC dependencies (target-specific, needed for compiler)
+    "gmp",               # Arbitrary precision math library
+    "mpfr",              # Multiple precision floating-point
+    "mpc",               # Multiple precision complex numbers
+    "libxcrypt",         # Cryptographic library (build-specific)
+    
+    # Duplicated from base (needed for compiler invocation and target-specific code gen)
+    "glibc",             # C library headers and target-specific libc.so
+    "linux-headers",     # Kernel headers for target architecture
+    "zlib",              # Compression library (if needed by tools)
+]
+
+[roles]
+description = "Role classification for image inclusion"
+
+[roles.base]
+include = ["runtime", "dev", "tool", "config", "doc"]
+exclude = ["debug"]
+rationale = "Base includes everything except debug symbols for size"
+
+[roles.tools]
+include = ["runtime", "dev", "tool", "debug"]
+exclude = ["doc", "config"]
+rationale = "Tools includes all development artifacts, omits docs/config for size"
