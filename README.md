@@ -253,6 +253,12 @@ Currently `kiln deps` both reports and builds. The reporting-only behavior will 
 
 ---
 
+## For AI Assistants
+
+For comprehensive guidance on the Crucible architecture, build conventions, and development workflows, see [.github/copilot-instructions.md](.github/copilot-instructions.md). This document covers the build system design, component model, cache/manifest system, and common editing tasks needed to work effectively in the repository.
+
+---
+
 ## Known issues / TODOs
 
 - `kiln deps --dry-run` — current `kiln deps` behavior (report only) should become `--dry-run`; bare `kiln deps` now builds
