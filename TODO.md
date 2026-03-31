@@ -329,3 +329,28 @@ Factor out _make_context(paths) so both methods build the substitution dict in o
 
 base.py glob issues — deferred until InstallFile lands
 The overlapping .so entries, the wrong var/lib/**/*.la paths, and the blanket lib64/** catch-all are all symptoms of the glob model being wrong. They get fixed as part of the InstallFile migration rather than patched in place.
+### 2026-03-31 — FileSpec implementation: glibc and linux-headers deployed
+
+Completed first pattern implementations of FileSpec-based role classification.
+
+GLIBC (components/glibc/build.py):
+  ✅ 3 FileSpec overrides deployed:
+     • **/gconv/** → runtime (locale support modules)
+     • usr/libexec/** → runtime (helper executables)
+     • var/db/Makefile → exclude (build-time helpers)
+  ✅ Removed obsolete commented glob-based system
+  ✅ Maintained detailed comments about multiarch layout
+
+LINUX-HEADERS (components/linux-headers/build.py):
+  ✅ 1 defensive FileSpec deployed:
+     • usr/include/** → dev (explicit documentation)
+  ✅ Shows how to guard simple, obvious cases
+
+Pattern Established:
+  • glibc demonstrates substantive edge-case overrides
+  • linux-headers demonstrates defensive/documenting usage
+  • Both set precedent for remaining 32 components
+
+Status: Framework deployment in progress. Recommend auditing remaining
+components for edge cases. Path inference alone handles most (90%+).
+
