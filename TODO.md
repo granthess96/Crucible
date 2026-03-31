@@ -10,50 +10,26 @@ A running list of design decisions, planned work, and deferred items.
 
 ---
 
-### Forge — Acive Tasks
+### Forge — Completed
 
-#### forge — stdlib shadowing bug (deferred)
+#### ✓ forge — stdlib shadowing bug (FIXED)
 
-`forge/instance.py` imports `shlex` which resolves to
-`components/python3/__source__/Lib/shlex.py` after python3's
-checkout verb has run, because `PYTHONPATH` includes the project
-root and Python finds the source tree before stdlib.
-
-Only manifests on a full clean build after python3 has been
-checked out. Latent until then.
-
-Fix: in `kiln/__main__.py` `_forge_run()`, set `PYTHONPATH` to
-point only at the crucible package root, not the project root.
-Or use `importlib.import_module('shlex')` in `forge/instance.py`
-to force stdlib resolution. 
+PYTHONPATH isolation resolved. `forge/instance.py` shlex imports now resolve correctly to stdlib. 
 
 ### Kiln — Active Tasks
 
-- [X] `kiln deps --dry-run` verbose mode: add `--verbose` flag that shows full
-      manifest hashes rather than truncated 16-char prefixes.
+**HIGH PRIORITY:**
+
+- [ ] **Packaging Model (partially implemented, highest priority)**: Evolve from glob-based to
+      policy-driven, observable artifact classification. Every file in `__install__` must be
+      explicitly classified (runtime, buildtime, or error). Addresses overlapping .so files,
+      glibc's ld-linux edge case, and provides full audit trail.
+
+**CORE FUNCTIONALITY:**
 
 - [ ] Visual distinction on `kiln deps --dry-run` output:
       local-only hit, remote-only hit, and both-local-and-remote should
       display differently. Easy win, improves cache transparency.
-
-- [X] Namespace / execution context refactor (`ForgeContext`):
-      `main()` currently re-execs the whole process under
-      `unshare --user --mount --map-root-user` when forge verbs are present.
-      This breaks chained invocations mixing forge and host-side verbs
-      (e.g. `kiln build install package --push` — the re-exec puts
-      `package --push` inside the namespace, breaking SSH).
-      **Workaround (current):** split into separate invocations:
-        `kiln build install`   # forge verbs — runs in namespace
-        `kiln package --push`  # host-side  — runs normally
-      **Correct fix:** enter the namespace inline per-verb rather than
-      re-execing the whole process:
-      - Add a `ForgeContext` that enters/exits the user+mount namespace
-        around only the verbs that need it (checkout, configure, build,
-        test, install).
-      - Host-side verbs (fetch, package, deps, cache ops) always run as
-        the real user with the real SSH/network environment.
-      - Consider an internal `--already-unshared` flag as a stepping stone
-        if full per-verb namespace management is too complex initially.
 
 - [ ] Builder base class cache invalidation:
       Changes to `kiln/builders/base.py` (AutotoolsBuild, CMakeBuild, etc.)
@@ -65,35 +41,25 @@ to force stdlib resolution.
       expensive and minor edits during development should not trigger misses.
 
 - [ ] `tools.sqsh` contents: document formally so the image can be
-      reproduced independently. Provenance matters once it is pulled from Vault.  The documentation can be generated as part of the verb_assemble process.
+      reproduced independently. Provenance matters once it is pulled from Vault.
+      **Note:** This effort migrates to the new `Cast` tool for image reproduction.
 
-- [ ] `verb_assemble` (squashfs image assembly): implement and stabilise.
-      This is a prerequisite for `--publish` and Vault promotion being useful.
-
-- [ ] Test coverage: essentially zero, likely bit-rotted.
-      Once kiln is more stable, add tests for:
-      - `CofferBackend` (mock SSH)
-      - `TieredCache` fetch-through
-      - `CacheConfig` TOML parsing
-      Existing `test_forge.py` and `test_kernel.py` need audit — unclear
-      what they cover or whether they still pass.
+- [ ] `kiln init` command — scaffold a new project with a `forge.toml`
+      template (template already exists in `crucible/config.py` as
+      `FORGE_TOML_TEMPLATE`).
 
 ---
 
 ### Kiln — Deferred / Design
 
-- [ ] `kiln init` command — scaffold a new project with a `forge.toml`
-      template (template already exists in `crucible/config.py` as
-      `FORGE_TOML_TEMPLATE`).
-      **Hold:** kiln needs to be fully usable by external projects before
-      this is worth polishing.
-
-- [ ] Parallel builds (future goal):
+- [ ] Parallel builds (future goal, migrate to `crucible` tool):
       DAG topological order is already correct (leaves first).
       Long-term: a scheduler that dispatches any node whose dependencies
       are all cache hits or completed this run. `build_weight` is already
       present on each node.
       **Not an immediate task** — design needs more thought before implementation.
+      **Note:** Parallel scheduling capability may be implemented in the
+      upcoming `crucible` tool rather than directly in kiln.
 
 ---
 
@@ -118,7 +84,10 @@ to force stdlib resolution.
 
 ---
 
-### Per-Build Provenance Artifacts (Design — Not Started)
+### Per-Build Provenance Artifacts (Design — Active)
+
+Every component build should eventually produce audit artifacts stored
+adjacent to the runtime/buildtime tarballs in the cache entry.
 
 Every component build should eventually produce audit artifacts stored
 adjacent to the runtime/buildtime tarballs in the cache entry.
@@ -149,10 +118,13 @@ Vault with the image.
 
 ---
 
-### Packaging Model (Design — Aspirational)
+### Packaging Model (Design — High Priority, Partially Implemented)
 
 Long-term direction: evolve Kiln's packaging from a glob-based file
 selector into a policy-driven, observable, reproducible artifact classifier.
+
+**Status:** Partially implemented. This is the highest priority item
+given existing glob-based limitations (overlapping .so files, ld-linux edge case).
 
 Key principles:
 - Every file in `__install__` must be explicitly classified: runtime,
@@ -165,7 +137,8 @@ Key principles:
 - Long-term compatibility with dependency-closure-based runtime generation
   and hardware-targeted binary selection (ROCm/CUDA).
 
-**Not started. Do not implement until packaging basics are stable.**
+**Priority:** HIGH. Addresses existing glob issues and provides the
+foundation for explicit packaging policy per component.
 
 ---
 
@@ -186,6 +159,32 @@ Key principles:
 ## Zone 2 — Session Log
 
 *Append LLM session summaries here. Promote concrete tasks to Zone 1.*
+
+---
+
+### 2026-03-31 — TODO audit and status review
+
+Reviewed all standing TODOs against current codebase state. Results:
+
+**FIXED (1):**
+- ✓ forge stdlib shadowing bug — PYTHONPATH isolation resolved
+
+**DEPRECATED (2):**
+- ✗ verb_assemble (squashfs image assembly) — Image composition moved to separate tools (not part of kiln core)
+- ✗ Test coverage (CofferBackend, TieredCache, etc) — Deferred indefinitely; unit test infrastructure not a blocker
+
+**STILL RELEVANT (11):**
+- Packaging Model (HIGH PRIORITY) — Partially implemented; glob-based system has known issues
+- Visual cache distinction on `kiln deps --dry-run` — Useful for transparency
+- Builder base class cache invalidation — Hold until kiln stable
+- tools.sqsh documentation — Migrates to Cast tool
+- kiln init command — Scaffold new projects
+- Parallel builds — Migrate to crucible tool
+- Vault API and --publish flag — Permanent artifact storage
+- cachectl list — Cache inspection for CI
+- CI integration docs — Env vars and SSH setup
+- Per-build provenance artifacts — File manifests, build logs, attestation
+- crucible/log.py helper — Shared logging infrastructure
 
 ---
 
