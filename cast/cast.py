@@ -47,6 +47,7 @@ class Cast:
         self.config = config
         self.bootstrap_config = {}
         self.component_lists = {}
+        self.resolved_artifacts = {}
 
     def run(self) -> bool:
         """
@@ -147,9 +148,10 @@ class Cast:
         Ensure all components are built and in cache.
         
         For each component in all layers, run:
-          kiln --target=<component> purge fetch checkout configure build install test package --push
+          kiln --target=<component> deps ensure --push
         
-        If not --keep-staging, append 'purge' to clean up after.
+        This ensures the component and all its dependencies are in the cache.
+        Kiln handles cache checking and only rebuilds missing artifacts.
         """
         if self.config.verbose:
             print(f"[1/5] Ensuring components are built")
@@ -161,22 +163,19 @@ class Cast:
 
         if self.config.dry_run:
             if self.config.verbose:
-                print(f"      DRY RUN: would build {len(all_components)} components")
+                print(f"      DRY RUN: would ensure {len(all_components)} components are built")
                 for comp in sorted(all_components):
                     print(f"        - {comp}")
             return True
 
-        # Build each component
+        # Build each component with deps
         for component in sorted(all_components):
             if self.config.verbose:
-                print(f"      Building {component}...")
+                print(f"      Ensuring {component} is built...")
 
-            # Build verbs: purge first, then fetch through package, then optional final purge
-            verbs = ["purge", "fetch", "checkout", "configure", "build", "install", "test", "package", "--push"]
-            if not self.config.keep_staging:
-                verbs.append("purge")
-
-            cmd = ["kiln", "--target", component] + verbs
+            # Use 'deps ensure' to ensure the component and all its dependencies are built.
+            # 'deps' will build any missing dependencies, then 'ensure' ensures the target itself.
+            cmd = ["kiln", "--target", component, "deps", "ensure", "--push"]
             
             try:
                 if self.config.verbose:
@@ -195,31 +194,179 @@ class Cast:
                     return False
                 
                 if self.config.verbose:
-                    print(f"        OK: {component} built")
+                    print(f"        OK: {component} built and cached")
             
             except FileNotFoundError:
                 print("ERROR: kiln not found in PATH", file=sys.stderr)
                 return False
 
         if self.config.verbose:
-            print(f"      All components built and cached")
+            print(f"      All components verified in cache")
 
         return True
 
     def _resolve_components(self) -> bool:
-        """Resolve component manifests via kiln resolve."""
+        """Resolve component manifests via kiln resolve.
+        
+        For each layer, calls: kiln resolve with component list via stdin.
+        Parses JSON output and stores resolved artifacts (including transitive deps).
+        Returns True on success, False on error.
+        """
         if self.config.verbose:
             print(f"[2/5] Resolving components for layers: {', '.join(self.config.layers)}")
 
+        self.resolved_artifacts = {}
+
         for layer in self.config.layers:
             components = self.component_lists[layer]
+
             if self.config.verbose:
                 print(f"      Resolving {layer} layer ({len(components)} components)...")
-            
-            # TODO: Call kiln resolve <components> and parse JSON
-            # For now, just stub
+
+            # For dry-run, skip subprocess call
+            if self.config.dry_run:
+                if self.config.verbose:
+                    print(f"        DRY RUN: would call kiln resolve with {len(components)} components")
+                self.resolved_artifacts[layer] = []
+                continue
+
+            # Subprocess: kiln resolve (reads JSON from stdin)
+            json_input = json.dumps(components)
+
+            try:
+                result = subprocess.run(
+                    ['kiln', 'resolve'],
+                    input=json_input.encode('utf-8'),
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                )
+            except FileNotFoundError:
+                print("ERROR: kiln not found in PATH", file=sys.stderr)
+                return False
+            except subprocess.TimeoutExpired:
+                print("ERROR: kiln resolve timed out", file=sys.stderr)
+                return False
+
+            # Check subprocess return code
+            if result.returncode != 0:
+                print(f"ERROR: kiln resolve failed for {layer}", file=sys.stderr)
+                stderr_msg = result.stderr.decode('utf-8', errors='replace')
+                if stderr_msg:
+                    print(f"       {stderr_msg[:300]}", file=sys.stderr)
+                return False
+
+            # Parse JSON output
+            try:
+                data = json.loads(result.stdout.decode('utf-8'))
+            except json.JSONDecodeError as e:
+                print(f"ERROR: kiln resolve output is not valid JSON: {e}", file=sys.stderr)
+                return False
+            except UnicodeDecodeError as e:
+                print(f"ERROR: kiln resolve output is not valid UTF-8: {e}", file=sys.stderr)
+                return False
+
+            # Validate schema and content
+            if not self._validate_resolve_output(data, layer):
+                return False
+
+            # Store resolved artifacts
+            self.resolved_artifacts[layer] = data['artifacts']
+
             if self.config.verbose:
-                print(f"        {len(components)} components, ~120 total files per component")
+                total_artifacts = len(data['artifacts'])
+                requested_artifacts = sum(1 for a in data['artifacts'] if a['requested'])
+                print(f"        Resolved {total_artifacts} artifacts "
+                      f"({requested_artifacts} requested, "
+                      f"{total_artifacts - requested_artifacts} dependencies)")
+
+        return True
+
+    def _validate_resolve_output(self, data: dict, layer: str) -> bool:
+        """Validate kiln resolve JSON output schema.
+        
+        Checks:
+        - schema_version is 1
+        - artifacts is a non-empty list
+        - all required fields present and correct types
+        - no duplicate component names
+        - all requested components present
+        
+        Returns True if valid, False if any check fails (error already printed).
+        """
+        # Check schema_version
+        if data.get('schema_version') != 1:
+            print(f"ERROR: unexpected schema_version in kiln output for {layer}: "
+                  f"{data.get('schema_version')}", file=sys.stderr)
+            return False
+
+        # Check artifacts key exists and is a list
+        artifacts = data.get('artifacts')
+        if not isinstance(artifacts, list):
+            print(f"ERROR: 'artifacts' is not a list in kiln output for {layer}",
+                  file=sys.stderr)
+            return False
+
+        if not artifacts:
+            print(f"ERROR: empty artifacts list from kiln resolve for {layer}",
+                  file=sys.stderr)
+            return False
+
+        # Validate each artifact
+        seen_names = set()
+        requested_names = set()
+
+        for idx, artifact in enumerate(artifacts):
+            if not isinstance(artifact, dict):
+                print(f"ERROR: artifact[{idx}] is not a dict in kiln output for {layer}",
+                      file=sys.stderr)
+                return False
+
+            # Check required fields
+            required_fields = {'component', 'version', 'hash', 'requested'}
+            missing = required_fields - set(artifact.keys())
+            if missing:
+                print(f"ERROR: artifact[{idx}] missing fields in kiln output for {layer}: "
+                      f"{', '.join(sorted(missing))}", file=sys.stderr)
+                return False
+
+            # Check field types
+            if not isinstance(artifact.get('component'), str):
+                print(f"ERROR: artifact[{idx}] 'component' is not a string",
+                      file=sys.stderr)
+                return False
+            if not isinstance(artifact.get('version'), str):
+                print(f"ERROR: artifact[{idx}] 'version' is not a string",
+                      file=sys.stderr)
+                return False
+            if not isinstance(artifact.get('hash'), str):
+                print(f"ERROR: artifact[{idx}] 'hash' is not a string",
+                      file=sys.stderr)
+                return False
+            if not isinstance(artifact.get('requested'), bool):
+                print(f"ERROR: artifact[{idx}] 'requested' is not a boolean",
+                      file=sys.stderr)
+                return False
+
+            comp_name = artifact['component']
+
+            # Check for duplicates
+            if comp_name in seen_names:
+                print(f"ERROR: duplicate component '{comp_name}' in kiln output for {layer}",
+                      file=sys.stderr)
+                return False
+
+            seen_names.add(comp_name)
+            if artifact['requested']:
+                requested_names.add(comp_name)
+
+        # Verify all requested components are in result
+        components = self.component_lists[layer]
+        missing = set(components) - seen_names
+        if missing:
+            print(f"ERROR: kiln resolve missing components for {layer}: "
+                  f"{', '.join(sorted(missing))}", file=sys.stderr)
+            return False
 
         return True
 

@@ -47,7 +47,6 @@ components = [
     "python3",           # Python interpreter
     
     # System basics
-    "filesystem",        # FHS directory structure
     "linux-headers",     # Kernel headers (portable across architectures)
     "patch",             # Patch utility
 ]
