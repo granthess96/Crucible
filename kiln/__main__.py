@@ -5,6 +5,7 @@ Usage (from any directory inside a build tree):
     kiln <verb> [verb ...] [options]
 Verbs (run in the order given, stop on first failure):
     deps        resolve DAG, stat cache/registry, build missing deps
+    ensure      ensure target component is fully built (cache-aware)
     fetch       git fetch source into bare clone cache
     checkout    export source tree, apply patches, prepare build dirs
     configure   run build system configure step
@@ -27,6 +28,8 @@ Options:
 Examples:
     cd components/zlib
     kiln deps
+    kiln ensure                        # build target if not cached
+    kiln deps ensure                   # build deps, then target
     kiln fetch checkout configure build test install package
     kiln fetch checkout configure build test install package --push
     kiln fetch configure build --verbose
@@ -62,7 +65,7 @@ from kiln.backends import make_resolver
 # Valid verbs
 # ---------------------------------------------------------------------------
 ALL_VERBS = [
-    "deps", "fetch", "checkout", "configure", "build", "test",
+    "deps", "ensure", "fetch", "checkout", "configure", "build", "test",
     "install", "package", "assemble", "clean", "purge", "clear_cache",
     "resolve",
 ]
@@ -141,9 +144,8 @@ def verb_deps(target: str, config, cache: TieredCache,
     --push  push each built dep to Coffer after packaging
     """
     from kiln.dag import BuildSchedule
-    from kiln.verbs.source import verb_fetch, verb_checkout
-    from kiln.verbs.build import verb_configure, verb_build, verb_test, verb_install
-    from kiln.verbs.packaging import verb_package
+    from kiln.verbs.ensure import verb_ensure
+
     resolver = make_resolver(config, cache)
     result   = resolver.resolve(target)
     if isinstance(result, ResolveError):
@@ -173,28 +175,16 @@ def verb_deps(target: str, config, cache: TieredCache,
     if not dep_misses:
         return True
     # --- Build each missing dep in topo order ---
-    BUILD_VERBS = [
-        ("fetch",     lambda t, cfg, c, r: verb_fetch(t, cfg, r)),
-        ("checkout",  lambda t, cfg, c, r: verb_checkout(t, cfg, c, r)),
-        ("configure", lambda t, cfg, c, r: verb_configure(t, cfg, r)),
-        ("build",     lambda t, cfg, c, r: verb_build(t, cfg, r)),
-        ("test",      lambda t, cfg, c, r: verb_test(t, cfg, r)),
-        ("install",   lambda t, cfg, c, r: verb_install(t, cfg, r)),
-        ("package",   lambda t, cfg, c, r: verb_package(t, cfg, c, r, push)),
-    ]
     for node in dep_misses:
         dep = node.name
-        print(f"\n--- building dep: {dep} ---")
-        for verb_name, caller in BUILD_VERBS:
-            ok = caller(dep, config, cache, reporter)
-            if not ok:
-                print(
-                    f"\nERROR: dep '{dep}' failed at verb '{verb_name}'.\n"
-                    f"       Fix the error above, then re-run 'kiln deps'.",
-                    file=sys.stderr,
-                )
-                return False
-        print(f"--- dep done:     {dep} ---")
+        ok = verb_ensure(dep, config, cache, reporter, push)
+        if not ok:
+            print(
+                f"\nERROR: dep '{dep}' failed.\n"
+                f"       Fix the error above, then re-run 'kiln deps'.",
+                file=sys.stderr,
+            )
+            return False
     print(f"\nAll {len(dep_misses)} missing dep(s) built successfully.")
     return True
 
@@ -207,9 +197,12 @@ def dispatch(verb: str, target: str, config, cache: TieredCache,
     from kiln.verbs.build     import verb_configure, verb_build, verb_test, verb_install
     from kiln.verbs.packaging import verb_package
     from kiln.verbs.workspace import verb_clean, verb_purge, verb_clear_cache
+    from kiln.verbs.ensure    import verb_ensure
 
     if verb == "deps":
         return verb_deps(target, config, cache, reporter, push, dry_run)
+    elif verb == "ensure":
+        return verb_ensure(target, config, cache, reporter, push)
     elif verb == "fetch":
         return verb_fetch(target, config, reporter)
     elif verb == "checkout":
