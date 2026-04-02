@@ -52,6 +52,7 @@ Verbs run in order, stop on first failure:
 | `clean` | Wipe `__build__/` and `__install__/` | host |
 | `purge` | Wipe everything including source and sysroot | host |
 | `clear_cache` | Remove all local cache entries | host |
+| `ensure` | Check cache for the target component, attempt build if cache miss
 
 Target is inferred from cwd — running `kiln build` from anywhere inside `components/curl/__source__/lib/` resolves to `curl`.
 
@@ -59,6 +60,7 @@ Target is inferred from cwd — running `kiln build` from anywhere inside `compo
 Ephemeral SSH-based remote artifact cache. Acts as a shared team cache — after building locally, `--push` uploads to Coffer so teammates (or CI) can skip the build entirely.
 
 ```
+kiln ensure --push               # full build + cache locally + push to Coffer - implies package
 kiln package --push              # build + cache locally + push to Coffer
 kiln deps --push                 # build all missing deps + push each to Coffer
 ```
@@ -68,7 +70,7 @@ Server-side tool is `cachectl`. Configured via `coffer_host = "user@host"` in `f
 ### Vault *(partially implemented)*
 Permanent registry for final artifacts, images, and telemetry. Unlike Coffer (ephemeral team cache), Vault stores immutable, long-term artifacts. Read by Forge for base/toolchain images (by hash); written by Cast for final images, and by future tools Ledger (test results) and Aegis (test reports). Current implementation: REST API + Garage S3 backend + admin CLI. Forge read-only access working. Awaiting Cast for write operations.
 
-### Cast *(planned)*
+### Cast *(in progress)*
 Image generation and projection tool. Reads component artifacts from local/Coffer cache, consumes FileSpec role annotations to filter runtime vs. dev vs. debug files, and generates final images (squashfs, tar, OCI, etc). Publishes generated images to Vault. Only tool that writes to Vault. Replaces the planned `assemble` verb from Kiln.
 
 ```
