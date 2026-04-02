@@ -760,20 +760,86 @@ component_list:
             return None
 
     def _push_to_vault(self) -> bool:
-        """Push images to Vault."""
+        """Push images to Vault.
+        
+        For each created image:
+        1. Upload blob to Vault
+        2. Create manifest entry
+        3. Tag for easy reference
+        """
         if self.config.verbose:
             print(f"[5/5] Pushing images to Vault")
-
-        # TODO: Connect to Vault, create blobs, tag
-        # For now, just stub
+        
+        if not self.config.vault_url:
+            print("ERROR: --vault-url required for --push", file=sys.stderr)
+            return False
+        
+        # Try to import httpx for uploads
+        try:
+            import httpx
+        except ImportError:
+            print("ERROR: httpx required for Vault uploads (install with: pip install httpx)", file=sys.stderr)
+            return False
+        
         for layer in self.config.layers:
+            image_file = self.config.output_dir / f"{layer}.sqsh"
+            if not image_file.exists():
+                if self.config.verbose:
+                    print(f"        WARNING: {layer}.sqsh not found, skipping")
+                continue
+            
             if self.config.verbose:
-                print(f"      Pushing {layer}.sqsh to {self.config.vault_url}")
-                print(f"        Digest: sha256:xyz789...")
-                print(f"        Tag: {layer}-latest")
-                print(f"        Status: OK")
-
+                print(f"      Pushing {layer}.sqsh to {self.config.vault_url}...")
+            
+            try:
+                # Compute blob digest (sha256)
+                blob_digest = self._compute_file_digest(image_file)
+                
+                # Upload blob to Vault
+                blob_url = f"{self.config.vault_url.rstrip('/')}/blob/{blob_digest}"
+                
+                with open(image_file, 'rb') as f:
+                    # Use PUT for blob upload
+                    response = httpx.put(blob_url, content=f.read(), timeout=300)
+                    response.raise_for_status()
+                
+                # Create manifest tag
+                manifest_tag = f"{layer}-latest"
+                tag_url = f"{self.config.vault_url.rstrip('/')}/tag/{manifest_tag}"
+                
+                manifest_data = {
+                    "blob_digest": f"sha256:{blob_digest}",
+                    "layer": layer,
+                    "created": str(image_file.stat().st_mtime),
+                    "size_bytes": image_file.stat().st_size,
+                }
+                
+                # Use POST for tag creation
+                response = httpx.post(tag_url, json=manifest_data, timeout=60)
+                response.raise_for_status()
+                
+                if self.config.verbose:
+                    print(f"        Digest: sha256:{blob_digest[:12]}...")
+                    print(f"        Tag: {manifest_tag}")
+                    print(f"        Status: OK")
+            
+            except httpx.HTTPError as e:
+                print(f"ERROR: Failed to push {layer} to Vault: {e}", file=sys.stderr)
+                return False
+            except Exception as e:
+                print(f"ERROR: Push failed for {layer}: {e}", file=sys.stderr)
+                return False
+        
         return True
+
+    def _compute_file_digest(self, file_path: Path) -> str:
+        """Compute SHA256 digest of file."""
+        from hashlib import sha256
+        sha = sha256()
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(1024 * 1024):
+                sha.update(chunk)
+        return sha.hexdigest()
 
     def _print_summary(self) -> bool:
         """Print summary of what was done."""
