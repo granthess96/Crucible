@@ -7,12 +7,16 @@ Consumes Kiln artifacts with FileSpec role annotations and generates images.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from kiln.cache import LocalDiskCache, TieredCache
 
 
 @dataclass
@@ -48,6 +52,8 @@ class Cast:
         self.bootstrap_config = {}
         self.component_lists = {}
         self.resolved_artifacts = {}
+        self.staged_layers = {}
+        self.staging_root = config.output_dir / "staging"
 
     def run(self) -> bool:
         """
@@ -371,24 +377,279 @@ class Cast:
         return True
 
     def _fetch_and_filter(self) -> bool:
-        """Fetch artifacts from cache and filter by role."""
+        """Fetch artifacts from cache and filter by role.
+        
+        For each layer:
+        1. Initialize TieredCache
+        2. Extract role rules from bootstrap.toml
+        3. For each resolved artifact:
+           - Fetch from cache
+           - Load files.json.zst (role index)
+           - Filter files by role rules
+           - Extract filtered files from tarball
+           - Stage to layer directory
+        4. Build layer metadata for Phase 4
+        """
         if self.config.verbose:
             print(f"[3/5] Fetching and filtering artifacts")
 
+        self.staged_layers = {}
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+
+        # Initialize cache once
+        try:
+            cache_root = Path.home() / ".kiln" / "cache"
+            local_cache = LocalDiskCache(cache_root)
+            tiered_cache = TieredCache(local=local_cache, coffer=None)
+        except Exception as e:
+            print(f"ERROR: Failed to initialize cache: {e}", file=sys.stderr)
+            return False
+
         for layer in self.config.layers:
+            artifacts = self.resolved_artifacts.get(layer, [])
+            if not artifacts:
+                print(f"WARNING: No artifacts for layer {layer}", file=sys.stderr)
+                continue
+
             if self.config.verbose:
-                print(f"      Fetching {layer} layer artifacts...")
-            
-            # TODO: Fetch .tar.zst + .files.json.zst from cache
-            # Filter by role specification
-            # For now, just stub
+                print(f"      Fetching {len(artifacts)} artifacts for {layer}...")
+
+            # Extract role rules for this layer
+            try:
+                layer_roles = self.bootstrap_config.get('roles', {}).get(layer, {})
+                include_roles = set(layer_roles.get('include', []))
+                exclude_roles = set(layer_roles.get('exclude', []))
+            except (KeyError, TypeError) as e:
+                print(f"ERROR: Invalid role rules in bootstrap.toml for {layer}: {e}", file=sys.stderr)
+                return False
+
+            if not include_roles:
+                print(f"WARNING: No include roles defined for {layer}", file=sys.stderr)
+
+            # Create layer staging directory
+            layer_staging = self.staging_root / layer
+            layer_staging.mkdir(parents=True, exist_ok=True)
+
+            # Process each artifact
+            layer_metadata = {'components': []}
+            for artifact in artifacts:
+                if not self.config.dry_run:
+                    if not self._fetch_and_filter_artifact(
+                        artifact, layer_staging, include_roles, exclude_roles, tiered_cache
+                    ):
+                        return False
+                    layer_metadata['components'].append({
+                        'name': artifact['component'],
+                        'version': artifact['version'],
+                    })
+                elif self.config.verbose:
+                    print(f"        DRY RUN: would fetch {artifact['component']} v{artifact['version']}")
+
+            # Count files and compute size
+            total_files = 0
+            total_size = 0
+            if not self.config.dry_run and layer_staging.exists():
+                for item in layer_staging.rglob('*'):
+                    if item.is_file():
+                        total_files += 1
+                        total_size += item.stat().st_size
+
+            self.staged_layers[layer] = {
+                'path': layer_staging,
+                'components': layer_metadata['components'],
+                'total_files': total_files,
+                'total_size_bytes': total_size,
+            }
+
             if self.config.verbose:
-                print(f"        1247 files, 145.2 MB ({layer} layer)")
+                if not self.config.dry_run:
+                    size_mb = total_size / 1024 / 1024
+                    print(f"        OK: {len(artifacts)} artifacts staged ({total_files} files, {size_mb:.1f} MB)")
+                else:
+                    print(f"        DRY RUN: would stage {len(artifacts)} artifacts")
 
         if self.config.dry_run and self.config.verbose:
             print(f"      DRY RUN: stopping before assembly")
 
         return True
+
+    def _fetch_and_filter_artifact(self, artifact: dict, layer_staging: Path, 
+                                   include_roles: set, exclude_roles: set,
+                                   tiered_cache: TieredCache) -> bool:
+        """Fetch a single artifact and stage filtered files.
+        
+        Returns True on success, False on error.
+        """
+        component = artifact['component']
+        version = artifact['version']
+        
+        # Extract manifest hash from "sha256:abc123..." format
+        full_hash = artifact['hash']
+        manifest_hash = full_hash.split(':', 1)[1] if ':' in full_hash else full_hash
+        
+        temp_dir = None
+        try:
+            # Create temporary directory for extraction
+            temp_dir = Path(tempfile.mkdtemp(prefix=f"cast-{component}-"))
+            
+            # Fetch artifact files from cache
+            try:
+                tiered_cache.fetch(manifest_hash, component, temp_dir)
+            except Exception as e:
+                print(f"ERROR: Failed to fetch {component}: {e}", file=sys.stderr)
+                return False
+            
+            # Load files.json.zst
+            files_index = self._load_files_index(temp_dir / f"{component}.files.json.zst")
+            if files_index is None:
+                return False
+            
+            # Filter files by role rules
+            filtered_files = self._filter_by_roles(files_index.get('files', {}), 
+                                                   include_roles, exclude_roles)
+            
+            if not filtered_files:
+                if self.config.verbose:
+                    print(f"        WARNING: No files matching roles for {component}")
+                # Still return True - some components may have no matching files
+                return True
+            
+            # Extract filtered files from tarball
+            if not self._extract_filtered_tarball(temp_dir / f"{component}.tar.zst", 
+                                                 filtered_files, temp_dir):
+                return False
+            
+            # Stage extracted files to layer directory
+            self._stage_files(temp_dir, filtered_files, layer_staging)
+            
+            return True
+        
+        except Exception as e:
+            print(f"ERROR: Failed to process {component}: {e}", file=sys.stderr)
+            return False
+        
+        finally:
+            # Cleanup temporary directory
+            if temp_dir and temp_dir.exists():
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+    def _load_files_index(self, files_json_zst: Path) -> dict | None:
+        """Decompress and parse files.json.zst.
+        
+        Returns the parsed JSON dict on success, None on error.
+        """
+        try:
+            # Use zstd to decompress via stdin/stdout
+            with open(files_json_zst, 'rb') as f:
+                result = subprocess.run(
+                    ['zstd', '-d'],
+                    stdin=f,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            
+            # Parse JSON
+            data = json.loads(result.stdout)
+            
+            # Validate structure
+            if not isinstance(data, dict) or 'files' not in data:
+                print(f"ERROR: Invalid files.json.zst format: missing 'files' key", file=sys.stderr)
+                return None
+            
+            return data
+        
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: zstd decompression failed: {e.stderr}", file=sys.stderr)
+            return None
+        except json.JSONDecodeError as e:
+            print(f"ERROR: JSON parse error in files.json.zst: {e}", file=sys.stderr)
+            return None
+        except FileNotFoundError:
+            print(f"ERROR: zstd not found in PATH", file=sys.stderr)
+            return None
+        except Exception as e:
+            print(f"ERROR: Failed to load files.json.zst: {e}", file=sys.stderr)
+            return None
+
+    def _filter_by_roles(self, files: dict[str, str], 
+                        include_roles: set, exclude_roles: set) -> dict[str, str]:
+        """Filter files by role rules.
+        
+        Include a file if its role is in include_roles AND NOT in exclude_roles.
+        """
+        filtered = {}
+        for path, role in files.items():
+            if role in include_roles and role not in exclude_roles:
+                filtered[path] = role
+        return filtered
+
+    def _extract_filtered_tarball(self, tar_path: Path, filtered_files: dict, 
+                                 temp_dir: Path) -> bool:
+        """Extract filtered files from tarball.
+        
+        Uses tar -T (read patterns from file) to extract only necessary paths,
+        avoiding memory bloat from large compressed archives.
+        """
+        if not filtered_files:
+            return True
+        
+        try:
+            # Write file list to temporary patterns file
+            patterns_file = temp_dir / ".patterns.txt"
+            patterns_file.write_text('\n'.join(filtered_files.keys()))
+            
+            # Extract only specified files
+            result = subprocess.run(
+                ['tar', '--use-compress-program=zstd', '--extract', '-f', str(tar_path),
+                 '-T', str(patterns_file)],
+                capture_output=True,
+                text=True,
+                cwd=str(temp_dir),
+                check=True,
+            )
+            
+            return True
+        
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: tar extraction failed: {e.stderr}", file=sys.stderr)
+            return False
+        except FileNotFoundError:
+            print(f"ERROR: tar not found in PATH", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"ERROR: Failed to extract tarball: {e}", file=sys.stderr)
+            return False
+
+    def _stage_files(self, src_root: Path, filtered_files: dict, dst_root: Path) -> None:
+        """Copy extracted files from temp to layer staging, preserving directory structure."""
+        for path in filtered_files.keys():
+            src = src_root / path
+            dst = dst_root / path
+            
+            # Create parent directories if needed
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Copy file (or symlink)
+            if src.is_symlink():
+                # Preserve symlink
+                link_target = src.readlink()
+                try:
+                    dst.symlink_to(link_target)
+                except FileExistsError:
+                    pass  # Already exists, skip
+            elif src.is_file():
+                # Copy file, preserving metadata
+                try:
+                    shutil.copy2(src, dst, follow_symlinks=True)
+                except Exception as e:
+                    # Log but continue - some files may be inaccessible
+                    if self.config.verbose:
+                        print(f"        WARNING: Failed to copy {path}: {e}")
+
 
     def _assemble_images(self) -> bool:
         """Create squashfs images."""
