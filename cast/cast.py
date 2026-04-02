@@ -652,27 +652,112 @@ class Cast:
 
 
     def _assemble_images(self) -> bool:
-        """Create squashfs images."""
+        """Create squashfs images from staged file trees.
+        
+        For each layer:
+        1. Call mksquashfs on staging/<layer>/
+        2. Compute manifest hash
+        3. Store metadata
+        """
         if self.config.verbose:
             print(f"[4/5] Assembling squashfs images")
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
 
         for layer in self.config.layers:
+            layer_staging = self.staging_root / layer
+            output_file = self.config.output_dir / f"{layer}.sqsh"
+            
             if self.config.verbose:
                 print(f"      Creating {layer}.sqsh...")
             
-            # TODO: Call mksquashfs
-            # Compute manifest hash
-            # For now, just stub
-            output_file = self.config.output_dir / f"{layer}.sqsh"
-            if self.config.verbose:
-                print(f"        Created: {output_file} (87 MB)")
-
-        if not self.config.keep_staging and self.config.verbose:
-            print(f"      Cleaned up staging directories")
+            # Check if staging directory exists
+            if not layer_staging.exists():
+                if self.config.verbose:
+                    print(f"        WARNING: No staging data for {layer}")
+                continue
+            
+            # Call mksquashfs
+            try:
+                result = subprocess.run(
+                    ['mksquashfs', str(layer_staging), str(output_file),
+                     '-quiet', '-comp', 'zstd'],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                
+                # Verify output file
+                if not output_file.exists():
+                    print(f"ERROR: mksquashfs failed to create {output_file}", file=sys.stderr)
+                    return False
+                
+                # Get file size and compute metadata
+                file_size = output_file.stat().st_size
+                size_mb = file_size / 1024 / 1024
+                
+                # Compute manifest hash for the image
+                manifest_hash = self._compute_image_manifest_hash(layer, output_file)
+                
+                if self.config.verbose:
+                    print(f"        OK: {output_file} ({size_mb:.1f} MB)")
+                    if manifest_hash:
+                        print(f"        Manifest: {manifest_hash[:12]}...")
+            
+            except subprocess.CalledProcessError as e:
+                print(f"ERROR: mksquashfs failed: {e.stderr}", file=sys.stderr)
+                return False
+            except FileNotFoundError:
+                print(f"ERROR: mksquashfs not found in PATH", file=sys.stderr)
+                return False
+            except Exception as e:
+                print(f"ERROR: Failed to create {layer}.sqsh: {e}", file=sys.stderr)
+                return False
+        
+        # Cleanup staging directories if not keeping them
+        if not self.config.keep_staging:
+            try:
+                shutil.rmtree(self.staging_root, ignore_errors=True)
+                if self.config.verbose:
+                    print(f"      Cleaned up staging directories")
+            except Exception as e:
+                if self.config.verbose:
+                    print(f"        WARNING: Failed to clean staging: {e}")
 
         return True
+
+    def _compute_image_manifest_hash(self, layer: str, image_file: Path) -> str | None:
+        """Compute manifest hash for squashfs image.
+        
+        Hash includes: layer name, image file hash, component list.
+        """
+        try:
+            from kiln.manifest import hash_file
+            
+            # Get file hash
+            image_hash = hash_file(image_file)
+            
+            # Build simple manifest text for reproducibility
+            layer_info = self.staged_layers.get(layer, {})
+            components = layer_info.get('components', [])
+            component_names = sorted([c['name'] for c in components])
+            
+            manifest_text = f"""layer: {layer}
+image_hash: {image_hash}
+components: {len(component_names)}
+component_list:
+"""
+            for comp in component_names:
+                manifest_text += f"  - {comp}\n"
+            
+            # Compute hash of manifest
+            from hashlib import sha256
+            return sha256(manifest_text.encode('utf-8')).hexdigest()
+        
+        except Exception as e:
+            if self.config.verbose:
+                print(f"        WARNING: Failed to compute manifest hash: {e}")
+            return None
 
     def _push_to_vault(self) -> bool:
         """Push images to Vault."""
