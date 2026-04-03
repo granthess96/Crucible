@@ -23,6 +23,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+.bash_history
 
 # Project specific
 .forge.local

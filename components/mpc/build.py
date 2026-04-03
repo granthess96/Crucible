@@ -8,3 +8,7 @@ class MPC(AutotoolsBuild):
     source  = {
         'url': 'https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz',
     }
+    configure_args = [
+        '--with-gmp={sysroot}/usr',
+        '--with-mpfr={sysroot}/usr',
+    ]

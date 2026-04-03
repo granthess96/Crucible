@@ -203,6 +203,7 @@ def _setup_usr_merge(root_dir: Path) -> None:
     Force the UsrMerge layout on a directory before it is populated.
     Uses relative symlinks to ensure portability.
     """
+    return # skip for now, debug test
     # 1. Create the targets first (the real directories)
     (root_dir / "usr/bin").mkdir(parents=True, exist_ok=True)
     (root_dir / "usr/lib").mkdir(parents=True, exist_ok=True)
@@ -214,7 +215,7 @@ def _setup_usr_merge(root_dir: Path) -> None:
         "bin": "usr/bin",
         "sbin": "usr/bin",
         "lib": "usr/lib",
-        "lib64": "usr/lib64"
+        "lib64": "usr/lib64"        
     }
 
     for link_name, target in links.items():

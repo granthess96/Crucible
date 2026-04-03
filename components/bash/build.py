@@ -1,5 +1,6 @@
 # components/bash/build.py
-from kiln.builders import AutotoolsBuild, BuildPaths
+from kiln.builders import AutotoolsBuild
+from kiln.builders.base import BuildPaths
 
 class BashBuild(AutotoolsBuild):
     name    = 'bash'
@@ -15,3 +16,14 @@ class BashBuild(AutotoolsBuild):
         '--disable-loadables',
         '--disable-examples',
     ]
+
+    def install_script(self, paths: BuildPaths) -> str:
+        return f"""\
+make DESTDIR={paths.install} install
+
+# /bin/sh symlink — assumed present by virtually every build system.
+# Bash does not create it; we must.
+ln -sf bash {paths.install}/usr/bin/sh
+mkdir -p {paths.install}/bin
+ln -sf ../usr/bin/bash {paths.install}/bin/sh
+"""

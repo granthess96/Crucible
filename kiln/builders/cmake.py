@@ -26,6 +26,10 @@ class CMakeBuild(BuildDef):
         cmd = [
             "cmake", paths.source,
             f"-B{paths.build}",
+            f"-DCMAKE_C_COMPILER=/usr/bin/gcc",
+            f"-DCMAKE_CXX_COMPILER=/usr/bin/g++",
+            f"-DCMAKE_AR=/usr/bin/ar",
+            f"-DCMAKE_RANLIB=/usr/bin/ranlib",
             f"-DCMAKE_STAGING_PREFIX={paths.install}/usr",
             f"-DCMAKE_SYSROOT={paths.sysroot}",
             f"-G{self.cmake_generator}",
@@ -50,6 +54,8 @@ class CMakeBuild(BuildDef):
         if self.link_flags:
             cmd.append(f"-DCMAKE_EXE_LINKER_FLAGS={' '.join(self._resolve(self.link_flags, paths))}")
 
+        print ("Configuring with CMake:")
+        print (f"{cmd} {self._resolve(self.configure_args, paths)}")
         return cmd + self._resolve(self.configure_args, paths)
 
 

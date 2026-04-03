@@ -31,7 +31,12 @@ class LinuxHeaders(ScriptBuild):
     def build_script(self, paths: BuildPaths) -> str:
         return f"""
 cd {paths.source}
-make headers_install ARCH=x86_64 INSTALL_HDR_PATH={paths.install}/usr
+make ARCH=x86_64 \
+     INSTALL_HDR_PATH={paths.install}/usr \
+     HOSTCC="/usr/bin/gcc" \
+     HOSTCFLAGS="-O2 -I/usr/include" \
+     HOSTLDFLAGS="" \
+     headers_install
 """
 
     def install_command(self, paths: BuildPaths) -> list[str]:

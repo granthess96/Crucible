@@ -17,6 +17,7 @@ components = [
     "bash",              # Shell
     "coreutils",         # mkdir, cp, rm, ls, etc.
     "findutils",         # find, xargs
+    "diffutils",         # cmp, diff
     "grep",              # Text search
     "sed",               # Stream editor
     "gawk",              # AWK interpreter
@@ -49,6 +50,9 @@ components = [
     # System basics
     "linux-headers",     # Kernel headers (portable across architectures)
     "patch",             # Patch utility
+
+    # File tools 
+    "rsync",
 ]
 
 [image.tools]

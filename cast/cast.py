@@ -429,6 +429,9 @@ class Cast:
             # Create layer staging directory
             layer_staging = self.staging_root / layer
             layer_staging.mkdir(parents=True, exist_ok=True)
+            
+            if not self.config.dry_run:
+                self._setup_usrmerge(layer_staging)
 
             # Process each artifact
             layer_metadata = {'components': []}
@@ -472,6 +475,25 @@ class Cast:
             print(f"      DRY RUN: stopping before assembly")
 
         return True
+    
+    def _setup_usrmerge(self, root: Path) -> None:
+        """Initialize the UsrMerge filesystem structure."""
+        # Ensure target directories exist
+        (root / "usr/bin").mkdir(parents=True, exist_ok=True)
+        (root / "usr/sbin").mkdir(parents=True, exist_ok=True)
+        (root / "usr/lib").mkdir(parents=True, exist_ok=True)
+
+        # Create root-level symlinks pointing to /usr equivalents
+        links = {
+            "bin": "usr/bin",
+            "sbin": "usr/sbin",
+            "lib": "usr/lib",
+        }
+
+        for link_name, target in links.items():
+            link_path = root / link_name
+            if not link_path.exists():
+                link_path.symlink_to(target)
 
     def _fetch_and_filter_artifact(self, artifact: dict, layer_staging: Path, 
                                    include_roles: set, exclude_roles: set,
@@ -604,7 +626,9 @@ class Cast:
             
             # Extract only specified files
             result = subprocess.run(
-                ['tar', '--use-compress-program=zstd', '--extract', '-f', str(tar_path),
+                ['tar', '--use-compress-program=zstd', '--extract', 
+                 '--no-same-owner',
+                 '-f', str(tar_path),
                  '-T', str(patterns_file)],
                 capture_output=True,
                 text=True,
@@ -625,31 +649,47 @@ class Cast:
             return False
 
     def _stage_files(self, src_root: Path, filtered_files: dict, dst_root: Path) -> None:
-        """Copy extracted files from temp to layer staging, preserving directory structure."""
-        for path in filtered_files.keys():
-            src = src_root / path
-            dst = dst_root / path
+        """Copy extracted files, handle lib64 warnings, and enforce UsrMerge."""
+        for path_str in filtered_files.keys():
+            path = Path(path_str)
             
-            # Create parent directories if needed
+            # --- lib64 Warning and Fixup ---
+            if "lib64" in path.parts:
+                if not self.config.quiet:
+                    print(f"  WARNING: Component contains lib64 path: {path_str}")
+                    print(f"           Redirecting to lib (non-multilib image).")
+                
+                # Create lib64 -> lib symlink at the root of the staging area if missing
+                lib64_link = dst_root / "lib64"
+                if not lib64_link.exists():
+                    lib64_link.symlink_to("lib")
+                
+                # Rewrite the destination path to use 'lib' instead of 'lib64'
+                new_parts = [p if p != "lib64" else "lib" for p in path.parts]
+                dst = dst_root / Path(*new_parts)
+            else:
+                dst = dst_root / path
+
+            src = src_root / path
+            
+            # Create parent directories
             dst.parent.mkdir(parents=True, exist_ok=True)
             
-            # Copy file (or symlink)
+            # Copy or Symlink
             if src.is_symlink():
-                # Preserve symlink
                 link_target = src.readlink()
                 try:
-                    dst.symlink_to(link_target)
+                    # If symlink already exists (from UsrMerge setup), skip it
+                    if not dst.exists():
+                        dst.symlink_to(link_target)
                 except FileExistsError:
-                    pass  # Already exists, skip
+                    pass
             elif src.is_file():
-                # Copy file, preserving metadata
                 try:
-                    shutil.copy2(src, dst, follow_symlinks=True)
+                    shutil.copy2(src, dst, follow_symlinks=False)
                 except Exception as e:
-                    # Log but continue - some files may be inaccessible
                     if self.config.verbose:
-                        print(f"        WARNING: Failed to copy {path}: {e}")
-
+                        print(f"        WARNING: Failed to copy {path_str}: {e}")
 
     def _assemble_images(self) -> bool:
         """Create squashfs images from staged file trees.
@@ -681,7 +721,7 @@ class Cast:
             try:
                 result = subprocess.run(
                     ['mksquashfs', str(layer_staging), str(output_file),
-                     '-quiet', '-comp', 'zstd'],
+                     '-quiet', '-comp', 'zstd', '-force-uid', '0', '-force-gid', '0'],
                     capture_output=True,
                     text=True,
                     check=True,

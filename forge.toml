@@ -5,21 +5,18 @@
 # base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
 # toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
 #base_image = "vault:blake3:bcea4985f2cd2feb109fc277fa5e76b99b805cdf90e78cf8ddc0150d113a3bc0"
-toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
 
-# the -DNF based boostrap image
-base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+# the -DNF based boostrap image (the toolchain image is a blank sqsh file)
+#base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+#toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
 
 # test image - bootstrapping
-#base_image = "vault:blake3:85844726316f86dfa4c86238442b9363cd938bf5a1af3c52c013cfb935e3c889"
-#base_image = "vault:blake3:7671edbb14e16fb994bae7069c50a3f1ae09edb480ba082676419b87a51dfef9"
-#base_image = "vault:blake3:2a7c41737d0366fdff7b1293b2b0015295c146d2fd35496efcb78c795fb76984"
-#base_image = "vault:blake3:1eec9269a86151a4d7e0378cca76f2f6ee30554691e33a0221655d26d725b643"
-#base_image = "vault:blake3:72e56e66d2da42eab98b9814da094f6b4215ffb039d3f70d0d1bb3715ca52f35"
-#base_image = "vault:blake3:025bd45072640727d71685b2c2f8366f9e97fcdb72c88b8c6eec1c9fcea26d43"
 
-#base_image = "vault:blake3:8187473a474cc404ce43a387307c6829742b52f909cf139d45c3b4c7fe920159"
-#toolchain  = "vault:blake3:bcdd315e443ba081b5d745cb9548634e712d3495fd04daeffc06c7153d542fea"
+#base_image = "vault:blake3:3e40657182dad6d1cf5e38a64df31656d18887ca2eeed0f1484c338dd2e6d619"
+#toolchain  = "vault:blake3:606819240bc983984d52db64b844faa9008fc7daf381acd094f1b49beec5a68b"
+
+base_image = "vault:blake3:1383e6762d23859cb4cf27f96f478f6659a9809eccc299846d3f4ae60a5dd07a"
+toolchain  = "vault:blake3:740a1591d4e2767fd561cd27ddccd874752750e30ee81dfa612ea351cdba5a1d"
 
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache

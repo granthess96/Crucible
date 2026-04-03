@@ -11,14 +11,16 @@ cmake.sha256 653427f0f5014750aafff22727fb2aa60c6c732ca91808cfb78ce22ddd9e55f0
 cmake.url https://cmake.org/files/v3.31/cmake-3.31.6.tar.gz
 coreutils.sha256 16535a9adf0b10037364e2d612aad3d9f4eca3a344949ced74d12faf4bd51d25
 coreutils.url https://ftp.gnu.org/gnu/coreutils/coreutils-9.10.tar.xz
+curl.sha256 c7ca7db48b0909743eaef34250da02c19bc61d4f1dcedd6603f109409536ab56
+curl.url https://curl.se/download/curl-8.11.1.tar.xz
+diffutils.sha256 90e5e93cc724e4ebe12ede80df1634063c7a855692685919bfe60b556c9bd09e
+diffutils.url https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz
 findutils.sha256 1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f5
 findutils.url https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz
 flex.sha256 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995
 flex.url https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
-gcc.sha256 e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da
-gcc.url https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
 glibc.sha256 fb82998998b2b29965467bc1b69d152e9c307d2cf301c9eafb4555b770ef3fd2
 glibc.url https://ftp.gnu.org/gnu/glibc/glibc-2.38.tar.xz
 gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
@@ -27,6 +29,8 @@ grep.sha256 1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab
 grep.url https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz
 gzip.sha256 7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057
 gzip.url https://ftp.gnu.org/gnu/gzip/gzip-1.13.tar.xz
+libarchive.sha256 8ac57c1f5e99550948d1fe755c806d26026e71827da228f36bef24527e372e6f
+libarchive.url https://github.com/libarchive/libarchive/releases/download/v3.8.6/libarchive-3.8.6.tar.xz
 libxcrypt.sha256 e5e1f4caee0a01de2aee26e3138807d6d3ca2b8e67287966d1fefd65e1fd8943
 libxcrypt.url https://github.com/besser82/libxcrypt/releases/download/v4.4.36/libxcrypt-4.4.36.tar.xz
 linux-headers.sha256 b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb
@@ -55,6 +59,8 @@ python3.sha256 d984bcc57cd67caab26f7def42e523b1c015bbc5dc07836cf4f0b63fa159eb56
 python3.url https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tar.xz
 readline.sha256 3feb7171f16a84ee82ca18a36d7b9be109a52c04f492a053331d7d1095007c35
 readline.url https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz
+rsync.sha256 2924bcb3a1ed8b551fc101f740b9f0fe0a202b115027647cf69850d65fd88c52
+rsync.url https://download.samba.org/pub/rsync/rsync-3.4.1.tar.gz
 sed.sha256 6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181
 sed.url https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz
 tar.sha256 4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16

@@ -19,4 +19,5 @@ class Python3(AutotoolsBuild):
         '--without-gdbm',
         '--without-tkinter',
         '--with-zlib=/{sysroot}/usr',
+        '--with-platlibdir=lib',
     ]

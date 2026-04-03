@@ -40,7 +40,10 @@ class AutotoolsBuild(BuildDef):
             paths
         )[0]
 
-        cmd = [f"{paths.source}/{self.configure_exe}", "--prefix=/usr", "--disable-nls"]
+        cmd = [f"{paths.source}/{self.configure_exe}", 
+               "--prefix=/usr", 
+               "--libdir=/usr/lib",
+               "--disable-nls"]
 
         cmd.append(f"CC={cc}")
 
