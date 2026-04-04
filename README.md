@@ -299,6 +299,36 @@ kiln --target=<component> deps ensure --push  # the high-level workflow - prefer
 cd components/curl
 kiln deps    # detects openssl manifest changed, rebuilds openssl + curl
 ```
+
+### Building for different bootstrap stages
+For multi-stage bootstrap environments (stage0, stage1, stage2), components can define stage-specific compiler flags:
+
+```bash
+# Build libxcrypt for stage0 bootstrap (with special compiler flags)
+kiln --bootstrap-stage stage0 --target libxcrypt fetch checkout configure build install package
+
+# Build for stage1 (standard flags)
+kiln --bootstrap-stage stage1 --target libxcrypt fetch checkout configure build install package
+
+# Cast also supports bootstrap stages:
+cast --bootstrap-stage stage0 base   # generates base layer for stage0
+```
+
+To make a component stage-aware, override the `finalize_build_flags()` hook:
+
+```python
+class Libxcrypt(AutotoolsBuild):
+    name = 'libxcrypt'
+    version = '4.4.36'
+    c_flags = ['-O2']
+    
+    def finalize_build_flags(self):
+        if self.bootstrap_stage == 'stage0':
+            self.c_flags = ['-O2', '-Wno-error=unterminated-string-initialization']
+```
+
+Different stages produce different cache keys — this is intentional, so each stage maintains its own independent cache entries.
+
 ---
 
 ## For AI Assistants

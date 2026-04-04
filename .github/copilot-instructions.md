@@ -264,6 +264,44 @@ link_flags = ['-Wl,-rpath,/usr/lib']     # LDFLAGS
 configure_args = ['--enable-feature']    # passed to ./configure or cmake
 ```
 
+### Bootstrap Stage Support
+
+For multi-stage bootstrap environments (stage0 vs. stage1+), components can customize their build flags based on which stage is active. Pass `--bootstrap-stage stage0` (or `stage1`, `stage2`) to kiln/cast, and components can detect this via the `finalize_build_flags()` hook:
+
+```python
+class Libxcrypt(AutotoolsBuild):
+    name = 'libxcrypt'
+    version = '4.4.36'
+    
+    # Base flags — always applied
+    c_flags = ['-O2']
+    
+    # Hook called after component instantiation with bootstrap_stage injected
+    def finalize_build_flags(self):
+        """Stage0 bootstrap requires extra compiler flag."""
+        if self.bootstrap_stage == 'stage0':
+            self.c_flags = ['-O2', '-Wno-error=unterminated-string-initialization']
+```
+
+**Key behaviors:**
+- `--bootstrap-stage` is passed via CLI, env var `KILN_BOOTSTRAP_STAGE`, or cast config
+- `finalize_build_flags()` is called immediately after component instantiation in all verbs
+- Different bootstrap stages produce **different manifest hashes** (intentional) — each stage has independent cache entries
+- Components without a `finalize_build_flags()` override use their default flags regardless of stage
+- Valid stages: `stage0`, `stage1`, `stage2`, or `None` (no stage specified)
+
+Usage:
+```bash
+# Build libxcrypt for stage0 with custom flags
+kiln --bootstrap-stage stage0 --target libxcrypt fetch checkout configure build install package
+
+# Environment variable (e.g., in CI)
+KILN_BOOTSTRAP_STAGE=stage0 kiln --target libxcrypt deps ensure
+
+# Cast integration
+cast --bootstrap-stage stage0 base    # forwards to kiln for each component
+```
+
 ### Patches
 
 Place `.patch` files in `components/<name>/patches/`. Applied in lexicographic order during `kiln checkout`:
