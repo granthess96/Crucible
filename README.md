@@ -279,6 +279,7 @@ max_weight = 8
 cd components/curl
 kiln fetch checkout configure build install package
 kiln fetch checkout configure build install package --push   # + push to Coffer
+
 ```
 
 ### Build all missing deps for a component, then build it
@@ -287,6 +288,10 @@ cd components/curl
 kiln deps                                    # builds zlib, openssl if missing
 kiln fetch checkout configure build install package --push
 ```
+or
+```bash
+kiln --target=<component> deps ensure --push  # the high-level workflow - preferred for Cast
+```
 
 ### Rebuild after changing a dep
 ```bash
@@ -294,38 +299,6 @@ kiln fetch checkout configure build install package --push
 cd components/curl
 kiln deps    # detects openssl manifest changed, rebuilds openssl + curl
 ```
-
-### Check what needs building without building it
-*(planned: `kiln deps --dry-run`)*  
-Currently `kiln deps` both reports and builds. The reporting-only behavior will become `--dry-run`.
-
----
-
-## Current component list
-
-| Component | Version | Type | Notes |
-|-----------|---------|------|-------|
-| linux-headers | 6.12 | AutotoolsBuild | |
-| glibc | 2.42 | AutotoolsBuild | build_weight=6 |
-| zlib | 1.3.2 | CMakeBuild | |
-| ncurses | 6.5 | AutotoolsBuild | --without-cxx-binding |
-| readline | 8.2 | AutotoolsBuild | |
-| bash | 5.3 | AutotoolsBuild | |
-| coreutils | 9.10 | AutotoolsBuild | FORCE_UNSAFE_CONFIGURE=1 |
-| sed | 4.9 | AutotoolsBuild | |
-| grep | 3.11 | AutotoolsBuild | |
-| gawk | 5.3.2 | AutotoolsBuild | |
-| findutils | 4.10.0 | AutotoolsBuild | |
-| pcre2 | 10.44 | CMakeBuild | |
-| tar | 1.35 | AutotoolsBuild | FORCE_UNSAFE_CONFIGURE=1 |
-| xz | 5.6.3 | AutotoolsBuild | |
-| gzip | 1.13 | AutotoolsBuild | |
-| bzip2 | 1.0.8 | MakeBuild | non-standard install, PREFIX only |
-| make | 4.4.1 | AutotoolsBuild | |
-| openssl | 3.4.1 | AutotoolsBuild | custom Configure script |
-| curl | 8.11.1 | CMakeBuild | |
-| libpng | 1.6.44 | CMakeBuild | |
-
 ---
 
 ## For AI Assistants
@@ -336,11 +309,6 @@ For comprehensive guidance on the Crucible architecture, build conventions, and 
 
 ## Known issues / TODOs
 
-- `kiln deps --dry-run` — current `kiln deps` behavior (report only) should become `--dry-run`; bare `kiln deps` now builds
-- `bzip2` MakeBuild — `MakeBuild` base class is minimal; bzip2 overrides `install_command` directly
-- Namespace/execution refactor — `fetch`, `checkout`, `package` are correctly host-side; forge verbs spawn forge subprocess; the old unshare re-exec of kiln is removed
 - Parallel scheduling — `build_weight` is tracked but scheduler runs sequentially; parallel `kiln deps` is a future feature
 - Audit log timestamps — `Reporter` writes to audit dir but per-verb timing is not yet recorded
-- `AssemblyDef` / `ImageDef` — image assembly (squashfs, OCI containers) not yet implemented
-- `ContainerDef` — OCI/podman support stubbed but not implemented
 - Vault — permanent image/container registry designed but not yet implemented

@@ -94,8 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_group.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("images"),
-        help="Output directory for generated images (default: ./images)",
+        default=None,
+        help="Output directory for generated images (default: <project_root>/images)",
     )
 
     # Vault
@@ -172,8 +172,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Resolve relative path
         args.spec_file = args.spec_file.resolve()
 
-    # Find forge.toml (for default Vault URL)
+    # Find forge.toml (for default Vault URL and output directory)
     forge_toml = find_forge_toml()
+    project_root = forge_toml.parent if forge_toml else Path.cwd()
+
+    # Resolve output directory relative to project root
+    if args.output_dir is None:
+        args.output_dir = project_root / "images"
+    elif not args.output_dir.is_absolute():
+        # If relative path given, still make it relative to project root
+        args.output_dir = project_root / args.output_dir
 
     # Determine Vault URL
     if args.vault_url is None and args.push:
