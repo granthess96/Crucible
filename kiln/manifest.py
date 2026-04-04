@@ -95,11 +95,12 @@ class Manifest:
 
     # Resolver-populated fields — exactly one of source_commit or source_sha256
     # will be set for any given component, depending on source type.
-    source_commit: str | None = None    # git: resolved commit SHA from kiln.lock
-    source_sha256: str | None = None    # tarball: sha256 from kiln.lock
-    builder_hash:  str | None = None    # SHA256 of the build.py file itself
-    patches_hash:  str | None = None    # SHA256 of the patches/ dir tree (if any)
-    forge_base:    str | None = None    # registry hash of forge base image
+    source_commit:  str | None = None    # git: resolved commit SHA from kiln.lock
+    source_sha256:  str | None = None    # tarball: sha256 from kiln.lock
+    builder_hash:   str | None = None    # SHA256 of the build.py file itself
+    patches_hash:   str | None = None    # SHA256 of the patches/ dir tree (if any)
+    forge_base:     str | None = None    # registry hash of forge base image
+    bootstrap_stage: str | None = None   # bootstrap environment stage (stage0, stage1, etc.)
 
     def __post_init__(self):
         self._finalise()
@@ -120,17 +121,20 @@ class Manifest:
             resolved["patches_hash"]  = self.patches_hash
         if self.forge_base:
             resolved["forge_base"]    = self.forge_base
+        if self.bootstrap_stage:
+            resolved["bootstrap_stage"] = self.bootstrap_stage
 
         self.text = render_manifest(resolved)
         self.hash = hash_manifest(self.text)
 
     def with_resolved(
         self,
-        source_commit: str | None = None,
-        source_sha256: str | None = None,
-        builder_hash:  str | None = None,
-        patches_hash:  str | None = None,
-        forge_base:    str | None = None,
+        source_commit:  str | None = None,
+        source_sha256:  str | None = None,
+        builder_hash:   str | None = None,
+        patches_hash:   str | None = None,
+        forge_base:     str | None = None,
+        bootstrap_stage: str | None = None,
     ) -> "Manifest":
         """
         Return a new Manifest with resolver-populated fields added.
@@ -138,14 +142,15 @@ class Manifest:
         Exactly one of source_commit / source_sha256 should be provided.
         """
         return Manifest(
-            component     = self.component,
-            version       = self.version,
-            fields        = self.fields,
-            source_commit = source_commit or self.source_commit,
-            source_sha256 = source_sha256 or self.source_sha256,
-            builder_hash  = builder_hash  or self.builder_hash,
-            patches_hash  = patches_hash  or self.patches_hash,
-            forge_base    = forge_base    or self.forge_base,
+            component       = self.component,
+            version         = self.version,
+            fields          = self.fields,
+            source_commit   = source_commit or self.source_commit,
+            source_sha256   = source_sha256 or self.source_sha256,
+            builder_hash    = builder_hash  or self.builder_hash,
+            patches_hash    = patches_hash  or self.patches_hash,
+            forge_base      = forge_base    or self.forge_base,
+            bootstrap_stage = bootstrap_stage or self.bootstrap_stage,
         )
 
     def write(self, path: Path) -> None:

@@ -407,11 +407,12 @@ class Resolver:
             source_type = _source_type(source)
 
             manifest = manifest.with_resolved(
-                source_commit = self._lock.get_commit(name) if source_type == "git" else None,
-                source_sha256 = self._lock.get_sha256(name) if source_type == "tarball" else None,
-                builder_hash  = hash_file(self._registry.build_py_path(name)),
-                patches_hash  = self._hash_patches(name),
-                forge_base    = self._forge_base,
+                source_commit   = self._lock.get_commit(name) if source_type == "git" else None,
+                source_sha256   = self._lock.get_sha256(name) if source_type == "tarball" else None,
+                builder_hash    = hash_file(self._registry.build_py_path(name)),
+                patches_hash    = self._hash_patches(name),
+                forge_base      = self._forge_base,
+                bootstrap_stage = self._bootstrap_stage,
             )
 
         output_store: Literal["cache", "registry"] = "cache" if is_build else "registry"
