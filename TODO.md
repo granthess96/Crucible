@@ -47,9 +47,10 @@ PYTHONPATH isolation resolved. `forge/instance.py` shlex imports now resolve cor
       **Hold:** do not enable until kiln is stable — cache rebuilds are
       expensive and minor edits during development should not trigger misses.
 
-- [ ] `tools.sqsh` contents: document formally so the image can be
-      reproduced independently. Provenance matters once it is pulled from Vault.
-      **Note:** This effort migrates to the new `Cast` tool for image reproduction.
+- [x] ~~`tools.sqsh` documentation~~ **COMPLETED 2026-04-04**
+      Removed unnecessary tools image layer entirely. Base image now contains
+      complete compiler toolchain. Simplified Forge mount stack, manifest
+      generation, and Cast image output. No separate tools/toolchain needed.
 
 - [ ] `kiln init` command — scaffold a new project with a `forge.toml`
       template (template already exists in `crucible/config.py` as
@@ -353,4 +354,35 @@ Pattern Established:
 
 Status: Framework deployment in progress. Recommend auditing remaining
 components for edge cases. Path inference alone handles most (90%+).
+
+---
+
+### 2026-04-04 — Tools image removal and Cast refactoring
+
+**COMPLETED (2 sessions):**
+
+1. **Tools Image Removal (Session 1)**
+   - ✅ Removed `toolchain` field from ForgeConfig (crucible/config.py)
+   - ✅ Simplified Forge mount stack: single base.sqsh instead of base+tools overlay
+   - ✅ Removed FORGE_TOOLCHAIN_PATH env var handling
+   - ✅ Removed `toolchain_hash` from Resolver and manifest generation
+   - ✅ Updated import-bootstrap.py to process only base image
+   - ✅ Updated README.md documentation
+   - ✅ Cleaned up forge.toml test references
+   - **Rationale:** tools.sqsh was unnecessary — base image already contains full
+     compiler toolchain (gcc, binutils, make, glibc, etc.) via bootstrap.toml.
+     Removal simplifies architecture, reduces manifest complexity, and maintains
+     all build capability. 70 lines removed, zero capability lost.
+
+2. **Cast Output Directory Fix (Session 2)**
+   - ✅ Cast now generates images in `<project_root>/images/` (adjacent to forge.toml)
+   - ✅ Resolves relative to forge.toml location, not cwd
+   - ✅ Help text updated to reflect new default
+   - **Impact:** Images always output to consistent location regardless of where
+     cast is invoked from. Improves workflow predictability.
+
+**TODO.md Updates:**
+- ✅ Marked tools image task as completed
+- ✅ No duplicates or stale items found
+
 
