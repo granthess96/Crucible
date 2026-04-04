@@ -83,7 +83,10 @@ components = [
     "patch",
     "diffutils",
     "findutils",
+    ##  Added based on aelf-hosting capabilities
     "rsync",
+    "bison",
+    "python3",
 ]
 
 [roles]
