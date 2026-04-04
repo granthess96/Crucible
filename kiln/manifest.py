@@ -100,7 +100,6 @@ class Manifest:
     builder_hash:  str | None = None    # SHA256 of the build.py file itself
     patches_hash:  str | None = None    # SHA256 of the patches/ dir tree (if any)
     forge_base:    str | None = None    # registry hash of forge base image
-    toolchain:     str | None = None    # registry hash of toolchain
 
     def __post_init__(self):
         self._finalise()
@@ -121,8 +120,6 @@ class Manifest:
             resolved["patches_hash"]  = self.patches_hash
         if self.forge_base:
             resolved["forge_base"]    = self.forge_base
-        if self.toolchain:
-            resolved["toolchain"]     = self.toolchain
 
         self.text = render_manifest(resolved)
         self.hash = hash_manifest(self.text)
@@ -134,7 +131,6 @@ class Manifest:
         builder_hash:  str | None = None,
         patches_hash:  str | None = None,
         forge_base:    str | None = None,
-        toolchain:     str | None = None,
     ) -> "Manifest":
         """
         Return a new Manifest with resolver-populated fields added.
@@ -150,7 +146,6 @@ class Manifest:
             builder_hash  = builder_hash  or self.builder_hash,
             patches_hash  = patches_hash  or self.patches_hash,
             forge_base    = forge_base    or self.forge_base,
-            toolchain     = toolchain     or self.toolchain,
         )
 
     def write(self, path: Path) -> None:

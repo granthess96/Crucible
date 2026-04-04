@@ -242,7 +242,6 @@ class Resolver:
             registry= registry_backend,
             lock    = KilnLock(Path("kiln.lock")),
             forge_base_hash  = "sha256:...",
-            toolchain_hash   = "sha256:...",
             max_weight       = 32,
         )
         result = resolver.resolve("rocm-stack-workstation")
@@ -255,7 +254,6 @@ class Resolver:
         registry:         RegistryBackend,
         lock:             KilnLock,
         forge_base_hash:  str,
-        toolchain_hash:   str,
         max_weight:       int = 8,
     ):
         self._registry       = ComponentRegistry(components_root)
@@ -263,7 +261,6 @@ class Resolver:
         self._reg_backend    = registry
         self._lock           = lock
         self._forge_base     = forge_base_hash
-        self._toolchain      = toolchain_hash
         self._max_weight     = max_weight
 
         # Memoisation — component name → ComponentNode
@@ -409,7 +406,6 @@ class Resolver:
                 builder_hash  = hash_file(self._registry.build_py_path(name)),
                 patches_hash  = self._hash_patches(name),
                 forge_base    = self._forge_base,
-                toolchain     = self._toolchain,
             )
 
         output_store: Literal["cache", "registry"] = "cache" if is_build else "registry"

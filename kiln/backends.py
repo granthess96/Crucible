@@ -57,7 +57,7 @@ class _RegistryStatAdapter(RegistryBackend):
 def make_resolver(config, cache: TieredCache) -> Resolver:
     """
     Build a Resolver from config and cache.
-    Centralises the repeated five-argument setup that was duplicated across
+    Centralises the repeated four-argument setup that was duplicated across
     verb_deps, _populate_sysroot, and verb_package
     """
     lock = KilnLock(config.lock_file)
@@ -67,6 +67,5 @@ def make_resolver(config, cache: TieredCache) -> Resolver:
         registry        = _RegistryStatAdapter(),
         lock            = lock,
         forge_base_hash = config.forge.base_image or "sha256:unconfigured",
-        toolchain_hash  = config.forge.toolchain  or "sha256:unconfigured",
         max_weight      = config.scheduler.max_weight,
     )

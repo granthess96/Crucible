@@ -23,8 +23,7 @@ from crucible.vault_client import is_vault_ref, resolve_image
 # Environment variable names — set by forge/__main__.py before unshare
 # so that vault resolution (which needs network) happens before the
 # network namespace is entered.
-_ENV_BASE  = "FORGE_BASE_IMAGE_PATH"
-_ENV_TOOLS = "FORGE_TOOLCHAIN_PATH"
+_ENV_BASE = "FORGE_BASE_IMAGE_PATH"
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -42,7 +41,6 @@ class VaultConfig:
 @dataclass
 class ForgeConfig:
     base_image: str = ""       # path or registry URI for base squashfs
-    toolchain:  str = ""       # path or registry URI for toolchain squashfs
 
 @dataclass
 class CacheConfig:
@@ -124,28 +122,7 @@ class CrucibleConfig:
             return Path(self.forge.base_image).expanduser()
         return self.build_root / "images" / "base.sqsh"
 
-    @property
-    def toolchain_path(self) -> Path:
-        """
-        Resolved path to toolchain squashfs image.
 
-        Resolution order:
-          1. FORGE_TOOLCHAIN_PATH env var — set by forge/__main__.py before
-             unshare so vault resolution happens outside the network namespace.
-          2. forge.toml toolchain — vault:blake3: ref or plain path.
-          3. Default: <project_root>/images/tools.sqsh
-        """
-        if p := os.environ.get(_ENV_TOOLS):
-            return Path(p)
-        if self.forge.toolchain:
-            if is_vault_ref(self.forge.toolchain):
-                return resolve_image(
-                    self.vault.url,
-                    self.forge.toolchain,
-                    self.local_cache_dir,
-                )
-            return Path(self.forge.toolchain).expanduser()
-        return self.build_root / "images" / "tools.sqsh"
 
     @property
     def tarball_cache_dir(self) -> Path:
@@ -216,7 +193,6 @@ def _apply_toml(config: CrucibleConfig, path: Path) -> None:
             config.vault.url = v
     if forge := data.get("forge"):
         if v := forge.get("base_image"): config.forge.base_image = v
-        if v := forge.get("toolchain"):  config.forge.toolchain  = v
     if cache := data.get("cache"):
         if v := cache.get("local"):
             config.cache.local = Path(v)
@@ -250,7 +226,6 @@ FORGE_TOML_TEMPLATE = """\
 # Commit this file. Machine-local overrides go in ~/.kiln/config.toml
 [forge]
 # base_image = "images/base.sqsh"    # default: <project_root>/images/base.sqsh
-# toolchain  = "images/tools.sqsh"   # default: <project_root>/images/tools.sqsh
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache
 # Coffer remote cache — set coffer_host to enable.

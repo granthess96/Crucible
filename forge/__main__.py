@@ -25,8 +25,7 @@ from forge.instance import ForgeInstance, create_dev_nodes
 # Environment variable names used to pass resolved image paths across the
 # unshare boundary — vault_client needs network access which is unavailable
 # inside the network namespace.
-_ENV_BASE  = "FORGE_BASE_IMAGE_PATH"
-_ENV_TOOLS = "FORGE_TOOLCHAIN_PATH"
+_ENV_BASE = "FORGE_BASE_IMAGE_PATH"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -65,8 +64,7 @@ def main(argv=None) -> int:
         # Resolve image paths now while we still have network access
         try:
             cfg  = load_config()
-            env[_ENV_BASE]  = str(cfg.base_image_path)
-            env[_ENV_TOOLS] = str(cfg.toolchain_path)
+            env[_ENV_BASE] = str(cfg.base_image_path)
         except ConfigError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1

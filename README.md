@@ -11,7 +11,7 @@ The system is designed around a small number of composable tools with clear resp
 Building a reproducible, from-scratch Linux userspace (LFS-style) is a multi-day process with no reliable way to know what changed between builds, whether a cached artifact is still valid, or which components need rebuilding when a dependency is updated.
 
 Crucible solves this by:
-- Treating every component as a pure function of its inputs (source, build script, deps, toolchain, base image)
+- Treating every component as a pure function of its inputs (source, build script, deps, base image)
 - Hashing those inputs into a manifest → cache key
 - Never rebuilding what's already cached, never using a stale cache entry
 - Providing a simple CLI that handles the entire lifecycle: fetch → checkout → configure → build → test → install → package
@@ -21,7 +21,7 @@ Crucible solves this by:
 ## Tools
 
 ### Forge
-Hermetic build sandbox. Uses Linux user namespaces + squashfuse + overlayfs to create a chroot-like environment without requiring real root. Mounts `base.sqsh` (read-only rootfs) and `tools.sqsh` (compiler/toolchain) as the build environment, overlays the component's `__source__`, `__sysroot__`, `__build__`, and `__install__` directories, then runs the build command inside.
+Hermetic build sandbox. Uses Linux user namespaces + squashfuse + overlayfs to create a chroot-like environment without requiring real root. Mounts `base.sqsh` (read-only rootfs containing the complete compiler toolchain) as the build environment, overlays the component's `__source__`, `__sysroot__`, `__build__`, and `__install__` directories, then runs the build command inside.
 
 Forge is invoked as a subprocess by Kiln — it handles its own `unshare` context and exits cleanly, so Kiln stays in user context for host-side operations (fetch, checkout, package).
 
@@ -103,7 +103,7 @@ Source Code
     │
     ├→ Coffer (ephemeral, LRU-evicted team cache)
     │
-    ├→ Forge (reads base/tools from Vault by hash during builds)
+    ├→ Forge (reads base from Vault by hash during builds)
     │
     └→ Cast (reads artifacts, generates final images)
         ↓
@@ -118,7 +118,7 @@ Source Code
 
 **Key principle:** Each tool has a single, clear responsibility:
 - **Kiln** — build orchestration only; no Vault interaction
-- **Forge** — read-only Vault consumer; downloads base/tools by hash
+- **Forge** — read-only Vault consumer; downloads base by hash
 - **Cast** — image generation; sole writer to Vault for permanent artifacts
 - **Ledger** — test collection; writes test data to Vault
 - **Aegis** — test reporting; reads Vault telemetry, publishes reports
@@ -172,7 +172,6 @@ dep:zlib: <manifest hash of zlib>
 source_sha256: <locked sha256 of downloaded tarball>
 builder_hash: <sha256 of curl/build.py>
 forge_base: <hash of base.sqsh>
-toolchain: <hash of tools.sqsh>
 ```
 
 A change to any input — including a dep's dep — produces a new hash and a cache miss.
@@ -261,10 +260,9 @@ Key settings:
 ```toml
 [forge]
 base_image = "/path/to/base.sqsh"
-tools_image = "/path/to/tools.sqsh"
 
 [cache]
-local_dir = "~/.kiln/cache"
+local = "~/.kiln/cache"
 coffer_host = "cache@buildserver"   # user@host, SSH key auth
 coffer_port = 22
 

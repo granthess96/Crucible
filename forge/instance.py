@@ -154,34 +154,27 @@ class ForgeInstance:
             dir=INSTANCES_DIR, prefix="forge-"
         ))
 
-        base_mount  = self._instance_dir / "base"
-        tools_mount = self._instance_dir / "tools"
-        rw_dir      = self._instance_dir / "rw"
+        base_mount = self._instance_dir / "base"
+        rw_dir     = self._instance_dir / "rw"
         self._merged = self._instance_dir / "merged"
 
-        for d in (base_mount, tools_mount, rw_dir, self._merged):
+        for d in (base_mount, rw_dir, self._merged):
             d.mkdir()
 
-        base_sqsh  = self.config.base_image_path
-        tools_sqsh = self.config.toolchain_path
+        base_sqsh = self.config.base_image_path
 
-        # Validate images exist before attempting mounts
-        for img in (base_sqsh, tools_sqsh):
-            if not img.exists():
-                raise RuntimeError(
-                    f"Image not found: {img}\n"
-                    f"Check forge.toml [forge] settings or run 'forge --create'."
-                )
+        # Validate base image exists before attempting mount
+        if not base_sqsh.exists():
+            raise RuntimeError(
+                f"Image not found: {base_sqsh}\n"
+                f"Check forge.toml [forge] settings or run 'forge --create'."
+            )
 
         # 1. Base squashfs — squashfuse (FUSE, no loop device, works in user namespace)
         _run(['squashfuse', str(base_sqsh), str(base_mount)], self.verbose)
         self._mounted.append((base_mount, 'fuse'))
 
-        # 2. Tools squashfs — squashfuse
-        _run(['squashfuse', str(tools_sqsh), str(tools_mount)], self.verbose)
-        self._mounted.append((tools_mount, 'fuse'))
-
-        # 3. tmpfs — upper and work must be siblings on the same filesystem
+        # 2. tmpfs — upper and work must be siblings on the same filesystem
         _run(['mount', '-t', 'tmpfs', 'tmpfs', str(rw_dir)], self.verbose)
         self._mounted.append((rw_dir, 'kernel'))
 
@@ -190,19 +183,18 @@ class ForgeInstance:
         upper.mkdir()
         work.mkdir()
 
-        # 4. OverlayFS — tools over base, tmpfs as rw layer
-        #    lowerdir: leftmost = highest priority
-        lowerdir = f"{tools_mount}:{base_mount}"
+        # 3. OverlayFS — tmpfs as rw layer over base
+        lowerdir = str(base_mount)
         _run(['mount', '-t', 'overlay', 'overlay',
               '-o', f'lowerdir={lowerdir},upperdir={upper},workdir={work}',
               str(self._merged)], self.verbose)
         self._mounted.append((self._merged, 'kernel'))
 
-        # 5. Create mount point stubs — squashfs has no /dev /proc /sys /workspace
+        # 4. Create mount point stubs — squashfs has no /dev /proc /sys /workspace
         for stub in ('tmp', 'proc', 'sys', 'dev', WORKSPACE_PATH.lstrip('/')):
             (self._merged / stub).mkdir(exist_ok=True)
 
-        # 6. Bind mount essential device nodes from host.
+        # 5. Bind mount essential device nodes from host.
         #    mknod requires real root — not available in user namespaces.
         #    Bind mounting host devices gives fully functional nodes.
         dev_nodes = ['null', 'zero', 'urandom', 'random', 'tty']
@@ -214,7 +206,7 @@ class ForgeInstance:
                  self.verbose)
             self._mounted.append((chroot_node, 'kernel'))
 
-        # 7. Component directory → /workspace
+        # 6. Component directory → /workspace
         workspace = self._merged / WORKSPACE_PATH.lstrip('/')
         _run(['mount', '--bind', str(self.component_path), str(workspace)], self.verbose)
         self._mounted.append((workspace, 'kernel'))
