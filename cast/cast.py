@@ -32,6 +32,7 @@ class CastConfig:
     dry_run: bool
     keep_staging: bool
     quiet: bool
+    bootstrap_stage: str | None = None
 
 
 class Cast:
@@ -182,6 +183,9 @@ class Cast:
             # Use 'deps ensure' to ensure the component and all its dependencies are built.
             # 'deps' will build any missing dependencies, then 'ensure' ensures the target itself.
             cmd = ["kiln", "--target", component, "deps", "ensure", "--push"]
+            if self.config.bootstrap_stage:
+                cmd.insert(2, "--bootstrap-stage")
+                cmd.insert(3, self.config.bootstrap_stage)
             
             try:
                 if self.config.verbose:
@@ -239,9 +243,13 @@ class Cast:
             # Subprocess: kiln resolve (reads JSON from stdin)
             json_input = json.dumps(components)
 
+            cmd = ['kiln', 'resolve']
+            if self.config.bootstrap_stage:
+                cmd.extend(['--bootstrap-stage', self.config.bootstrap_stage])
+
             try:
                 result = subprocess.run(
-                    ['kiln', 'resolve'],
+                    cmd,
                     input=json_input.encode('utf-8'),
                     capture_output=True,
                     check=False,

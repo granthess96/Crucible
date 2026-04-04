@@ -121,6 +121,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Verbose output (show each step)",
     )
     debug_group.add_argument(
+        "--bootstrap-stage",
+        default=None,
+        help="Bootstrap environment stage (stage0, stage1, stage2) - passed to kiln",
+    )
+    debug_group.add_argument(
         "--debug",
         action="store_true",
         help="Include debug symbols in images (overrides bootstrap.toml)",
@@ -219,6 +224,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
         keep_staging=args.keep_staging,
         quiet=args.quiet,
+        bootstrap_stage=args.bootstrap_stage,
     )
 
     # Run Cast
