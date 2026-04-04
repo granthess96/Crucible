@@ -12,3 +12,19 @@ class MPC(AutotoolsBuild):
         '--with-gmp={sysroot}/usr',
         '--with-mpfr={sysroot}/usr',
     ]
+
+
+    def install_script(self, paths: BuildPaths) -> str:
+        return f"""\
+make DESTDIR={paths.install} install
+
+find {paths.install} -name '*.la' | while read la; do
+    sed -i \\
+        -e "s|libdir='/usr/lib64'|libdir='{paths.sysroot}/usr/lib64'|g" \\
+        -e "s| /usr/lib64/| {paths.sysroot}/usr/lib64/|g" \\
+        -e "s|libdir='/usr/lib'|libdir='{paths.sysroot}/usr/lib'|g" \\
+        -e "s| /usr/lib/| {paths.sysroot}/usr/lib/|g" \\
+        "$la"
+done
+"""
+

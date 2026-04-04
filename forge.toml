@@ -7,16 +7,24 @@
 #base_image = "vault:blake3:bcea4985f2cd2feb109fc277fa5e76b99b805cdf90e78cf8ddc0150d113a3bc0"
 
 # the -DNF based boostrap image (the toolchain image is a blank sqsh file)
-#base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
-#toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
+base_image = "vault:blake3:5c143c60b98928f82a6dea897069976539d65ff597350fa59d1b4fe9a996c024"
+toolchain  = "vault:blake3:d767f728468f7cd66ebd544a98aab2f79cb0869ae67d6e16c1bf2fb0b50d18d2"
 
 # test image - bootstrapping
 
 #base_image = "vault:blake3:3e40657182dad6d1cf5e38a64df31656d18887ca2eeed0f1484c338dd2e6d619"
 #toolchain  = "vault:blake3:606819240bc983984d52db64b844faa9008fc7daf381acd094f1b49beec5a68b"
 
-base_image = "vault:blake3:1383e6762d23859cb4cf27f96f478f6659a9809eccc299846d3f4ae60a5dd07a"
-toolchain  = "vault:blake3:740a1591d4e2767fd561cd27ddccd874752750e30ee81dfa612ea351cdba5a1d"
+#base_image = "vault:blake3:1383e6762d23859cb4cf27f96f478f6659a9809eccc299846d3f4ae60a5dd07a"
+#toolchain  = "vault:blake3:740a1591d4e2767fd561cd27ddccd874752750e30ee81dfa612ea351cdba5a1d"
+
+#base_image = "vault:blake3:1383e6762d23859cb4cf27f96f478f6659a9809eccc299846d3f4ae60a5dd07a"
+#base_image = "vault:blake3:254898697a148c4a1785bb0a10e45650ec9bbb24a40140f7236a5f4ff4caac42"
+#base_image = "vault:blake3:a638425b3d7116c280a0b76804913e18287df0b43f6af9299f29d03bcd4c32d0"
+
+#base_image = "vault:blake3:d9c5bbfaf008a6e5271252fa140acbdf753fdc0029e8b4d2880dcb4d41d51d79"
+
+
 
 [cache]
 local  = "~/.kiln/cache"    # local artifact cache

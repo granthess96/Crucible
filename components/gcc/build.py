@@ -27,7 +27,7 @@ class GCC(AutotoolsBuild):
     ]
     
     build_env = {
-        "LIBRARY_PATH": "{sysroot}/usr/lib64:{sysroot}/lib64",
+        "LIBRARY_PATH": "{sysroot}/usr/lib64:{sysroot}/lib64:{sysroot}/usr/lib:{sysroot}/lib",
     }
 
     # -------------------------------------------------------------------------

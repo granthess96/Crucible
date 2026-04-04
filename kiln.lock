@@ -21,6 +21,8 @@ flex.sha256 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995
 flex.url https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 gawk.sha256 f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc
 gawk.url https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz
+gcc.sha256 e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da
+gcc.url https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
 glibc.sha256 fb82998998b2b29965467bc1b69d152e9c307d2cf301c9eafb4555b770ef3fd2
 glibc.url https://ftp.gnu.org/gnu/glibc/glibc-2.38.tar.xz
 gmp.sha256 a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898

@@ -1,16 +1,20 @@
 # bootstrap.toml
 #
-# Image definitions for Forge base and tools squashfs images.
+# Unified image definition for the Forge base environment.
 #
 # Philosophy:
-# - base.sqsh: OS foundation + arch-independent tooling (portable across x86_64, aarch64, etc.)
-# - tools.sqsh: Arch-specific compiler toolchain (tied to build architecture)
+# - base.sqsh: A complete, self-contained OS foundation and compiler toolchain.
+# This eliminates the complexity of managing separate arch-independent and 
+# arch-specific layers.
 #
-# Principle: If ANY part of a component is architecture-specific, the ENTIRE component
-# goes into tools. This avoids complexity of splitting arch-dependent from arch-independent.
+# - stage1.sqsh: A minimal bootstrap that breaks the stage0 (Fedora 43 chroot image) ABI chain.
+# Replaces with the correct glibc, and a functional gcc and enough tooling to run autotools builds.
+#
+# - stage2.sqsh: A fuller featured bootstrap that has enough tooling to build the final image, but is
+# now on the real destination ABI
 
 [image.base]
-description = "Base OS image: POSIX utilities, interpreters, portable build tools"
+description = "Base OS image: POSIX utilities, interpreters, and full compiler toolchain"
 format = "squashfs"
 components = [
     # Core POSIX utilities
@@ -22,68 +26,75 @@ components = [
     "sed",               # Stream editor
     "gawk",              # AWK interpreter
     
-    # Build tools (arch-independent)
+    # Build Systems & Generators
     "make",              # Make build system
     "ninja",             # Ninja build system
     "cmake",             # CMake build system
-    "flex",              # Lexer generator (produces arch-independent C)
-    "bison",             # Parser generator (produces arch-independent C)
+    "flex",              # Lexer generator
+    "bison",             # Parser generator
     "m4",                # Macro processor
+    
+    # Compiler Toolchain
+    "gcc",               # C/C++ compiler
+    "binutils",          # Assembler, linker, objdump
+    "gmp",               # Arbitrary precision math library
+    "mpfr",              # Multiple precision floating-point
+    "mpc",               # Multiple precision complex numbers
+    "libxcrypt",         # Cryptographic library
     
     # Compression and archive tools
     "gzip",              # gzip compression
     "bzip2",             # bzip2 compression
     "xz",                # XZ compression
     "tar",               # Archive utility
-    "zlib",              # Compression library (generic, no arch-specific code)
+    "zlib",              # Compression library
     
-    # Runtime libraries (arch abstractions)
-    "glibc",             # C library (ABI abstraction over arch details)
+    # Runtime libraries & System Basics
+    "glibc",             # C library
     "ncurses",           # Terminal handling library
     "readline",          # Line editing library
-    "openssl",           # Cryptography library (no arch-specific components)
+    "openssl",           # Cryptography library
+    "linux-headers",     # Kernel headers
+    "patch",             # Patch utility
+    "rsync",             # File transfer/sync
     
-    # Scripting languages and interpreters
+    # Scripting languages
     "perl",              # Perl interpreter
     "python3",           # Python interpreter
-    
-    # System basics
-    "linux-headers",     # Kernel headers (portable across architectures)
-    "patch",             # Patch utility
-
-    # File tools 
-    "rsync",
 ]
 
-[image.tools]
-description = "Tools image: Architecture-specific compiler toolchain"
+
+[image.stage1]
+description = "Bootstrap stage 1 image, minimal! only needs to be able to build autotools based components"
 format = "squashfs"
 components = [
-    # Compiler toolchain (ARCHITECTURE-SPECIFIC)
-    "gcc",               # C/C++ compiler (compiled for host arch, produces target arch binaries)
-    "binutils",          # Assembler, linker, objdump (arch-specific target binaries)
-    
-    # GCC dependencies (target-specific, needed for compiler)
-    "gmp",               # Arbitrary precision math library
-    "mpfr",              # Multiple precision floating-point
-    "mpc",               # Multiple precision complex numbers
-    "libxcrypt",         # Cryptographic library (build-specific)
-    
-    # Duplicated from base (needed for compiler invocation and target-specific code gen)
-    "glibc",             # C library headers and target-specific libc.so
-    "linux-headers",     # Kernel headers for target architecture
-    "zlib",              # Compression library (if needed by tools)
+    "bash",         # absolutely required for Forge compatibility
+    "glibc",
+    "binutils",
+    "gcc",
+    "make",
+    "coreutils",
+    "sed",
+    "gawk",
+    "grep",
+    "tar",
+    "gzip",
+    "xz",
+    "patch",
+    "diffutils",
+    "findutils",
+    "rsync",
 ]
 
 [roles]
 description = "Role classification for image inclusion"
 
 [roles.base]
-include = ["runtime", "dev", "tool", "config", "doc"]
-exclude = ["debug"]
-rationale = "Base includes everything except debug symbols for size"
+include = ["runtime", "dev", "tool", "config", "doc", "debug"]
+exclude = []
+rationale = "Unified base includes all artifacts to ensure a batteries-included dev environment."
 
-[roles.tools]
-include = ["runtime", "dev", "tool", "debug"]
-exclude = ["doc", "config"]
-rationale = "Tools includes all development artifacts, omits docs/config for size"
+[roles.stage1]
+include = ["runtime", "dev", "tool", "config", "doc", "debug"]
+exclude = []
+rationale = "Relatively crude bootstrap stage, just include everything."

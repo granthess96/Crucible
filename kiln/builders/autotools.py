@@ -42,7 +42,7 @@ class AutotoolsBuild(BuildDef):
 
         cmd = [f"{paths.source}/{self.configure_exe}", 
                "--prefix=/usr", 
-               "--libdir=/usr/lib",
+               "--libdir=/usr/lib64",
                "--disable-nls"]
 
         cmd.append(f"CC={cc}")

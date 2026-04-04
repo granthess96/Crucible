@@ -23,7 +23,8 @@ make DESTDIR={paths.install} install
 
 # /bin/sh symlink — assumed present by virtually every build system.
 # Bash does not create it; we must.
+mkdir -p {paths.install}/usr/bin
 ln -sf bash {paths.install}/usr/bin/sh
 mkdir -p {paths.install}/bin
-ln -sf ../usr/bin/bash {paths.install}/bin/sh
+ln -sf bash {paths.install}/bin/sh
 """

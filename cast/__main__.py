@@ -146,10 +146,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Validate layers
-    valid_layers = {"base", "tools"}
+    valid_layers = {"base", "tools", "stage1", "stage2"}
     invalid = [l for l in args.layers if l not in valid_layers]
     if invalid:
-        parser.error(f"Invalid layer(s): {', '.join(invalid)}. Valid: base, tools")
+        parser.error(f"Invalid layer(s): {', '.join(invalid)}. Valid: base, tools, stage1, stage2")
         return 2
 
     if not args.layers:

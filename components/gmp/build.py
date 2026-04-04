@@ -27,6 +27,8 @@ find {paths.install} -name '*.la' | while read la; do
     sed -i \\
         -e "s|libdir='/usr/lib64'|libdir='{paths.sysroot}/usr/lib64'|g" \\
         -e "s| /usr/lib64/| {paths.sysroot}/usr/lib64/|g" \\
+        -e "s|libdir='/usr/lib'|libdir='{paths.sysroot}/usr/lib'|g" \\
+        -e "s| /usr/lib/| {paths.sysroot}/usr/lib/|g" \\
         "$la"
 done
 """

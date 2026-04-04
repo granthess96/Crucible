@@ -653,23 +653,7 @@ class Cast:
         for path_str in filtered_files.keys():
             path = Path(path_str)
             
-            # --- lib64 Warning and Fixup ---
-            if "lib64" in path.parts:
-                if not self.config.quiet:
-                    print(f"  WARNING: Component contains lib64 path: {path_str}")
-                    print(f"           Redirecting to lib (non-multilib image).")
-                
-                # Create lib64 -> lib symlink at the root of the staging area if missing
-                lib64_link = dst_root / "lib64"
-                if not lib64_link.exists():
-                    lib64_link.symlink_to("lib")
-                
-                # Rewrite the destination path to use 'lib' instead of 'lib64'
-                new_parts = [p if p != "lib64" else "lib" for p in path.parts]
-                dst = dst_root / Path(*new_parts)
-            else:
-                dst = dst_root / path
-
+            dst = dst_root / path
             src = src_root / path
             
             # Create parent directories

@@ -18,7 +18,7 @@ class GlibcBuild(AutotoolsBuild):
     ]
 
     c_flags   = ["-O2", "-D_FORTIFY_SOURCE=2"]
-    cxx_flags = ["-O2", "-D_FORTIFY_SOURCE=2"]   # fixed typo: _SORUCE -> _SOURCE
+    cxx_flags = ["-O2", "-D_FORTIFY_SOURCE=2"]
     link_flags = ["-Wl,-z,relro"]
 
     # -------------------------------------------------------------------------
@@ -52,7 +52,3 @@ class GlibcBuild(AutotoolsBuild):
         # Exclude build-time locale database helpers
         FileSpec("var/db/Makefile", role="exclude"),
     ]
-
-    # -------------------------------------------------------------------------
-    # Previous glob-based approach (superseded by FileSpec)
-    # -------------------------------------------------------------------------

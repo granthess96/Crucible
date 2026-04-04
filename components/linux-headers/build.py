@@ -30,6 +30,12 @@ class LinuxHeaders(ScriptBuild):
 
     def build_script(self, paths: BuildPaths) -> str:
         return f"""
+cd /bin
+ln -sf bash sh
+cd /usr
+if [ ! -e "/usr/lib64" ]; then
+  ln -s lib lib64
+fi
 cd {paths.source}
 make ARCH=x86_64 \
      INSTALL_HDR_PATH={paths.install}/usr \
