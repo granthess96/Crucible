@@ -138,7 +138,9 @@ def verb_fetch(target: str, config, reporter: Reporter) -> bool:
               file=sys.stderr)
         return False
 
-    instance = reg.instantiate(target)
+    instance = reg.instantiate(target, bootstrap_stage=config.build.bootstrap_stage)
+    if hasattr(instance, 'finalize_build_flags'):
+        instance.finalize_build_flags()
     source   = getattr(instance, 'source', None)
     if not source:
         print(
@@ -262,7 +264,9 @@ def verb_checkout(target: str, config, cache: TieredCache,
     id_file   = state_dir / "source_id"
     type_file = state_dir / "source_type"
 
-    instance      = reg.instantiate(target)
+    instance      = reg.instantiate(target, bootstrap_stage=config.build.bootstrap_stage)
+    if hasattr(instance, 'finalize_build_flags'):
+        instance.finalize_build_flags()
     source        = getattr(instance, 'source', {})
     component_dir = config.components_dir / target
     source_dir    = component_dir / "__source__"

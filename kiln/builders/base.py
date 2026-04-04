@@ -73,6 +73,10 @@ class BuildDef(KilnComponent):
     where the heuristic would guess wrong, files that need a non-obvious
     role, or files that should be excluded entirely.  Most components leave
     `files` empty.
+    
+    bootstrap_stage can be set by kiln to indicate the build environment stage
+    (stage0, stage1, stage2, or None for production). Components can override
+    finalize_build_flags() to adjust build parameters based on stage.
     """
     from kiln.spec import FileSpec  # local import to avoid circular at module level
 
@@ -83,6 +87,15 @@ class BuildDef(KilnComponent):
     configure_args: ClassVar[list[str]]      = []
     build_env:      ClassVar[dict[str, str]] = {}
     files:          ClassVar[list]           = []   # list[FileSpec] — overrides only
+    bootstrap_stage: str | None              = None  # injected by ComponentRegistry
+
+    def finalize_build_flags(self) -> None:
+        """
+        Hook called after instantiation for components to adjust c_flags,
+        configure_args, etc. based on bootstrap_stage or other runtime context.
+        Override in subclasses to customize build parameters per stage.
+        """
+        pass
 
     def _resolve(self, values: list[str], paths: BuildPaths) -> list[str]:
         context = {

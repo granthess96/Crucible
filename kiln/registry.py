@@ -142,10 +142,16 @@ class ComponentRegistry:
         self._ensure_loaded(name)
         return self._classes[name]
 
-    def instantiate(self, name: str) -> KilnComponent:
-        """Return a fresh instance of the component class."""
+    def instantiate(self, name: str, bootstrap_stage: str | None = None) -> KilnComponent:
+        """
+        Return a fresh instance of the component class.
+        If bootstrap_stage is provided, inject it into the instance.
+        """
         self._ensure_loaded(name)
-        return self._classes[name]()
+        instance = self._classes[name]()
+        if bootstrap_stage is not None:
+            instance.bootstrap_stage = bootstrap_stage
+        return instance
 
     def build_py_path(self, name: str) -> Path:
         return self._discovered[name]

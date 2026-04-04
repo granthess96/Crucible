@@ -255,6 +255,7 @@ class Resolver:
         lock:             KilnLock,
         forge_base_hash:  str,
         max_weight:       int = 8,
+        bootstrap_stage:  str | None = None,
     ):
         self._registry       = ComponentRegistry(components_root)
         self._cache          = cache
@@ -262,6 +263,7 @@ class Resolver:
         self._lock           = lock
         self._forge_base     = forge_base_hash
         self._max_weight     = max_weight
+        self._bootstrap_stage = bootstrap_stage
 
         # Memoisation — component name → ComponentNode
         # Populated in topo order; later nodes can reference earlier nodes' manifests
@@ -334,7 +336,9 @@ class Resolver:
                     involved=[name],
                 )
 
-            instance = self._registry.instantiate(name)
+            instance = self._registry.instantiate(name, bootstrap_stage=self._bootstrap_stage)
+            if hasattr(instance, 'finalize_build_flags'):
+                instance.finalize_build_flags()
             deps = list(instance.deps)
             dep_map[name] = deps
 
@@ -375,7 +379,9 @@ class Resolver:
     # --- Node construction ---
 
     def _build_node(self, name: str, dep_names: list[str]) -> ComponentNode:
-        instance = self._registry.instantiate(name)
+        instance = self._registry.instantiate(name, bootstrap_stage=self._bootstrap_stage)
+        if hasattr(instance, 'finalize_build_flags'):
+            instance.finalize_build_flags()
         #is_build = self._registry.is_build_def(name)
         is_build = True # all components are now BuildDefs, AssemblyDef is deprecated
 

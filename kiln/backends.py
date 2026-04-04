@@ -68,4 +68,5 @@ def make_resolver(config, cache: TieredCache) -> Resolver:
         lock            = lock,
         forge_base_hash = config.forge.base_image or "sha256:unconfigured",
         max_weight      = config.scheduler.max_weight,
+        bootstrap_stage = config.build.bootstrap_stage,
     )

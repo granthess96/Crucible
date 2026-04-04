@@ -17,4 +17,9 @@ class Libxcrypt(AutotoolsBuild):
         '--disable-static',
     ]
 
-    c_flags = ['-O2', '-Wno-error=unterminated-string-initialization' ]
+    c_flags = ['-O2']
+
+    def finalize_build_flags(self):
+        """Stage0 bootstrap requires additional flag; stage1+ doesn't."""
+        if self.bootstrap_stage == 'stage0':
+            self.c_flags = ['-O2', '-Wno-error=unterminated-string-initialization']

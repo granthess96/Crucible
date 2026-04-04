@@ -16,6 +16,7 @@ _here = Path(__file__).parent.parent
 def get_builder(target: str, config):
     """
     Load component registry and instantiate the builder for target.
+    Injects bootstrap_stage from config and calls finalize_build_flags() hook.
     Returns (registry, instance) on success, (None, None) on failure
     with error already printed.
     """
@@ -28,7 +29,14 @@ def get_builder(target: str, config):
     if target not in reg:
         print(f"ERROR: component '{target}' not found", file=sys.stderr)
         return None, None
-    return reg, reg.instantiate(target)
+    
+    instance = reg.instantiate(target, bootstrap_stage=config.build.bootstrap_stage)
+    
+    # Allow components to adjust flags based on bootstrap_stage
+    if hasattr(instance, 'finalize_build_flags'):
+        instance.finalize_build_flags()
+    
+    return reg, instance
 
 
 def resolve_verb(instance, verb: str, paths):

@@ -101,6 +101,9 @@ def make_parser() -> argparse.ArgumentParser:
         help="override max_weight for this run")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
         help="resolve and display dependency DAG, then exit without building")
+    parser.add_argument("--bootstrap-stage", metavar="STAGE", default=None,
+        choices=["stage0", "stage1", "stage2"],
+        help="bootstrap environment stage (affects component-specific build flags)")
     # resolve-specific
     parser.add_argument(
         "--from-stdin", action="store_true", dest="from_stdin",
@@ -296,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.weight is not None:
             config.scheduler.max_weight = args.weight
+        if args.bootstrap_stage is not None:
+            config.build.bootstrap_stage = args.bootstrap_stage
         try:
             cache = cache_from_config(config)
         except Exception as exc:
@@ -320,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.weight is not None:
         config.scheduler.max_weight = args.weight
+    if args.bootstrap_stage is not None:
+        config.build.bootstrap_stage = args.bootstrap_stage
 
     target = args.target or infer_target(config, Path.cwd())
     if target is None:

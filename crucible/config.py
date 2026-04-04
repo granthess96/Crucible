@@ -62,6 +62,10 @@ class SchedulerConfig:
     max_weight: int = 8
 
 @dataclass
+class BuildConfig:
+    bootstrap_stage: str | None = None  # "stage0", "stage1", "stage2", or None
+
+@dataclass
 class CrucibleConfig:
     """
     Unified config for kiln and forge.
@@ -73,6 +77,7 @@ class CrucibleConfig:
     registry:   RegistryConfig  = field(default_factory=RegistryConfig)
     scheduler:  SchedulerConfig = field(default_factory=SchedulerConfig)
     vault:      VaultConfig     = field(default_factory=VaultConfig)
+    build:      BuildConfig     = field(default_factory=BuildConfig)
 
     # --- Derived paths ---
     @property
@@ -175,6 +180,10 @@ def load_config(start: Path | None = None) -> CrucibleConfig:
         config.cache.local = Path(c)
     if h := os.environ.get("KILN_COFFER_HOST"):
         config.cache.coffer_host = h
+    if b := os.environ.get("KILN_BOOTSTRAP_STAGE"):
+        if b not in ("stage0", "stage1", "stage2"):
+            raise ConfigError(f"KILN_BOOTSTRAP_STAGE must be stage0, stage1, or stage2, got: {b!r}")
+        config.build.bootstrap_stage = b
 
     return config
 
